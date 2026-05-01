@@ -1,0 +1,357 @@
+================================================================================
+STRUKTUR DIREKTORI DAN FILE BACKENDLARAVEL (Sahabat Assalam)
+================================================================================
+Created: 2024
+Framework: Laravel 12
+PHP Version: 8.2
+================================================================================
+
+📁 DIREKTORI UTAMA (ROOT)
+================================================================================
+
+backend/
+├── .editorconfig          → Konfigurasi editor (indentasi, encoding)
+├── .gitattributes       → Konfigurasi Git (line endings, diff)
+├── .gitignore          → File/folder yang diabaikan Git
+├── artisan            → CLI Artisan Laravel
+├── composer.json      → Dependency manager (PHP)
+├── composer.lock     → Locked versions dependensi
+├── phpunit.xml       → Konfigurasi unit testing
+├── vite.config.js    → Konfigurasi Vite (frontend bundler)
+├── README.md        → Dokumentasi project
+├── TODO.md          → Daftar tugas development
+├── test.jpg         → File test (image)
+├── masterContext.md  → Konteks project (AI context)
+
+📁 app/ (MAIN APPLICATION CODE)
+================================================================================
+
+📦 Struktur Modular:
+app/
+├── Enums/
+│   └── RegionType.php          → Enum tipe wilayah (province, regency, district, village)
+│
+├── Http/
+│   ├── Controllers/
+│   │   └── Controller.php       → Base controller (parentclass semua controller)
+│   │   └── Api/                  → (kosong - API controller ada di modules)
+│   ├── Middleware/
+│   │   └── EnsureUserIsAdmin.php → Middleware: cek user adalah admin
+│   ├── Requests/                  → (kosong - request validation ada di modules)
+│   └── Resources/                 → (kosong - API resources ada di modules)
+│
+├── Models/ (Core Models - tidak pakai modul)
+│   ├── AdminAction.php     → Model: log aktivitas admin
+│   ├── OtpCode.php        → Model: kode OTP verification
+│   ├── Region.php         → Model: wilayah Indonesia (prov,kota,kec,desa)
+│   ├── Setting.php        → Model: konfigurasi app (registration fee, dll)
+│   └── User.php           → Model: user/app user
+│
+├── Modules/ (Modular Structure - plugin-like)
+│   ├── AgentSystem/          ✅ MODUL UTAMA - Sistem Agen/Agent
+│   │   ├── Controllers/
+│   │   │   ├── AdminController.php    → Controller admin (dashboard, verifikasi)
+│   │   │   ├── AgentController.php → Controller agent (register, upload dokumen)
+│   │   │   ├── AuthController.php → Controller auth (login, forgot password)
+│   │   │   └── BonusController.php → Controller bonus (bonus transaksi)
+│   │   ├── Models/
+│   │   │   ├── Agent.php             → Model: data agen
+│   │   │   ├── AgentAddress.php      → Model: alamat agen
+│   │   │   ├── AgentBankAccount.php  → Model: rekening bank agen
+│   │   │   ├── AgentDocument.ktp.php  → Model: dokumen KTP
+│   │   │   ├── BonusTransaction.php  → Model: transaksi bonus
+│   │   │   ├── Payment.php           → Model: bukti pembayaran
+│   │   │   └── Pilgrim.php           → Model: Jamaah (calon Haji)
+│   │   ├── Providers/
+│   │   │   └── AgentSystemServiceProvider.php → Service provider modul
+│   │   ├── Requests/
+│   │   │   ├── RegisterAgentRequest.php
+│   │   │   ├── UpdateAgentAddressRequest.php
+│   │   │   ├── UpdateAgentBankRequest.php
+│   │   │   ├── UploadDocumentsRequest.php
+│   │   │   ├── VerifyDocumentRequest.php
+│   │   │   └── VerifyPaymentRequest.php
+│   │   ├── Resources/
+│   │   │   ├── AgentAddressResource.php
+│   │   │   └── AgentResource.php
+│   │   └── Routes/
+│   │       └── api.php          → API routes untuk modul AgentSystem
+│   │
+│   └── TourTravel/           → Modul Tour Travel (struktur kosong/future project)
+│       ├── Controllers/
+│       ├── Models/
+│       └── Routes/
+│
+├── Providers/
+│   └── AppServiceProvider.php  → Global service provider
+│
+📁 bootstrap/ (LARAVEL BOOTSTRAP)
+================================================================================
+
+bootstrap/
+├── app.php              → Konfigurasi utama aplikasi
+│                        → API routes: app/Modules/AgentSystem/Routes/api.php
+│                        → Web routes: routes/web.php
+│                        → Console routes: routes/console.php
+│                        → Providers: AgentSystemServiceProvider
+│                        → Middleware alias: 'admin' => EnsureUserIsAdmin
+└── cache/
+    └── .gitignore       → Cache storage
+
+📁 config/ (KONFIGURASI LARAVEL)
+================================================================================
+
+config/
+├── app.php              → Konfigurasi app (name, env, debug, timezone, locale)
+├── auth.php             → Konfigurasi auth (guards, providers)
+├── cache.php            → Konfigurasi cache driver
+├── database.php         → Konfigurasi database (SQLite default)
+├── filesystems.php      → KONFIGURASI STORAGE & SYMLINK
+├── logging.php          → Konfigurasi logging
+├── mail.php             → Konfigurasi mail driver
+├── queue.php            → Konfigurasi queue driver
+├── sanctum.php          → Konfigurasi Laravel Sanctum (API token auth)
+├── services.php         → Konfigurasi external services
+├── session.php          → Konfigurasi session
+└── laravolt/
+    └── indonesia.php    → Konfigurasi Laravolt Indonesia (region data)
+
+📁 database/
+================================================================================
+
+database/
+├── factories/
+│   └── UserFactory.php      → Factory untuk user seeding
+│
+├── migrations/
+│   ├── 0001_01_01_000001_create_cache_table.php
+│   ├── 0001_01_01_000002_create_jobs_table.php
+│   ├── 2016_08_03_072729_create_provinces_table.php
+│   ├── 2016_08_03_072750_create_cities_table.php
+│   ├── 2016_08_03_072804_create_districts_table.php
+│   ├── 2016_08_03_072819_create_villages_table.php
+│   ├── 2024_01_01_000001_create_regions_table.php       → Wilayah Indonesia
+│   ├── 2024_01_01_000002_create_users_table.php         → User table
+│   ├── 2024_01_01_000003_create_agents_table.php      → Agen
+│   ├── 2024_01_01_000004_create_agent_addresses_table.php
+│   ├── 2024_01_01_000005_create_agent_documents_table.php
+│   ├── 2024_01_01_000006_create_agent_bank_accounts_table.php
+│   ├── 2024_01_01_000007_create_payments_table.php   → Pembayaran registrasi
+│   ├── 2024_01_01_000008_create_bonus_transactions_table.php
+│   ├── 2024_01_01_000009_create_pilgrims_table.php   → Jamaah Haji
+│   ├── 2024_01_01_000010_create_admin_actions_and_settings_tables.php
+│   ├── 2026_04_28_031355_create_personal_access_tokens_table.php → Sanctum tokens
+│   ├── 2026_04_28_031356_create_sessions_table.php
+│   └── 2026_04_29_075648_create_otp_codes_table.php
+│
+└── seeders/
+    ├── AdminSeeder.php         → Seed admin user
+    ├── DatabaseSeeder.php     → Main seeder
+    ├── RegionFullSeeder.php   → Seed semua wilayah Indonesia
+    └── RegionSeeder.php     → Seed sample wilayah
+
+📁 public/ (PUBLIC WEB ROOT)
+================================================================================
+
+public/
+├── .htaccess           → Apache config
+├── favicon.ico         → Favicon
+├── index.php           → Entry point web app
+└── robots.txt          → Robot.txt
+
+📁 resources/ (FRONTEND ASSETS)
+================================================================================
+
+resources/
+├── css/
+│   └── app.css        → CSS utama
+├── js/
+│   ├── app.js        → JS utama (Vite entry)
+│   └── bootstrap.js  → Bootstrap JS
+└── views/
+    └── welcome.blade.php → Welcome page (landing)
+
+📁 routes/ (ROUTING)
+================================================================================
+
+routes/
+├── console.php        → Artisan commands & scheduling
+└── web.php           → Web routes (web UI)
+
+📁 storage/ (LARAVEL STORAGE)
+================================================================================
+
+storage/
+├── app/               → Application storage
+│   └── .gitignore
+├── framework/
+│   ├── cache/
+│   ├── sessions/
+│   ├── testing/
+│   └── views/
+└── logs/
+    └── .gitignore
+
+📁 tests/ (TESTING)
+================================================================================
+
+tests/
+├── Feature/
+│   └── ExampleTest.php
+├── Unit/
+│   └── ExampleTest.php
+└── TestCase.php
+
+================================================================================
+📋 PENJELASAN FILE/DIREKTORI PENTING
+================================================================================
+
+🔗 SYMLINK PUBLIC:
+--------------------------------------------------------------------------------
+File: config/filesystems.php
+Konfigurasi:
+    'links' => [
+        public_path('storage') => storage_path('app/public'),
+    ],
+
+Artisan command: php artisan storage:link
+Hasil: public/storage → storage/app/public
+
+Fungsi: Membuat file di storage/app/public dapat diakses via URL /storage/...
+
+
+📂 STORAGE LOCATION:
+--------------------------------------------------------------------------------
+Path helper                    → Lokasi actual
+─────────────────────────────────────────────────────────
+storage_path('app/private')    → storage/app/           (private, tidak bisa diakses via URL)
+storage_path('app/public')     → storage/app/public/     (public, bisa diakses via /storage/... jika disymlink)
+storage_path('framework')     → storage/framework/      (cache, sessions, views)
+storage_path('logs')          → storage/logs/            (log files)
+
+
+🛣️ API ROUTES:
+--------------------------------------------------------------------------------
+File: backend/app/Modules/AgentSystem/Routes/api.php
+
+Route Groups:
+1. PUBLIC ROUTES (tanpa auth):
+   - POST /api/login              → Login
+   - POST /api/forgot-password    → Lupa password
+   - POST /api/verify-otp        → Verifikasi OTP
+   - POST /api/reset-password     → Reset password
+   - GET  /api/settings/registration-fee  → Ambil biaya registrasi
+   - GET  /api/regions/provinces          → Get provinces
+   - GET  /api/regions/regencies/{id}    → Get cities
+   - GET  /api/regions/districts/{id}    → Get districts
+   - POST /api/agents/register          → Registration step 1
+
+2. PROTECTED ROUTES (auth:sanctum):
+   - POST /api/logout
+   - GET  /api/me
+   - POST /api/email/send-otp
+   - POST /api/email/verify
+   - GET  /api/agents/{id}/status
+   - POST /api/agents/{id}/documents     → Step 2
+   - PUT  /api/agents/{id}/address       → Step 3
+   - PUT  /api/agents/{id}/bank         → Step 4
+   - POST /api/agents/{id}/payment       → Step 5
+
+3. ADMIN ROUTES (auth:sanctum + admin middleware):
+   - GET  /api/admin/dashboard
+   - GET  /api/admin/pending-agents
+   - PUT  /api/admin/documents/{id}/verify
+   - PUT  /api/admin/payments/{id}/verify
+   - PUT  /api/admin/agents/{id}/status
+
+
+📦 MODULE SYSTEM:
+--------------------------------------------------------------------------------
+Package: 
+- Laravel Framework v12
+- Laravel Sanctum v4.3 (API Token Authentication)
+- Laravolt Indonesia v0.41 (Data Wilayah Indonesia)
+
+Struktur Module:
+app/Modules/{ModuleName}/
+├── Controllers/         → HTTP controllers
+├── Models/             → Eloquent models
+├── Providers/         → ServiceProvider (module registration)
+├── Requests/          → Form request validation
+├── Resources/         → API Resource (transformer)
+└── Routes/            → Module routes
+
+Module Registration (bootstrap/app.php):
+    ->withProviders([
+        AgentSystemServiceProvider::class,
+    ])
+
+Service Provider Features:
+    - Load migrations from database/migrations
+    - Register module routes
+    - Register module configs
+
+
+🔐 AUTHENTICATION:
+--------------------------------------------------------------------------------
+Method: Laravel Sanctum (Token-based)
+- Guards: 'sanctum' (stateful), 'sanctum' (stateless API)
+- Token table: personal_access_tokens
+- Middleware: auth:sanctum
+
+Admin Check:
+- Middleware: 'admin' (EnsureUserIsAdmin)
+- Field: users.is_admin (boolean)
+
+
+📊 DATABASE:
+--------------------------------------------------------------------------------
+Default: SQLite (development)
+Location: database/database.sqlite
+
+Main Tables:
+- users              → User account
+- agents             → Data agent
+- agent_addresses    → Alamat agent
+- agent_documents    → Dokumen KTP
+- agent_bank_accounts → Rekening bank
+- payments           → Pembayaran registrasi
+- regions            → Wilayah Indonesia
+- otp_codes          → Kode OTP
+- personal_access_tokens → API tokens
+- admin_actions      → Log aktivitas admin
+- settings           → Konfigurasi app
+
+
+⚙️ MIDDLEWARE PENTING:
+--------------------------------------------------------------------------------
+1. EnsureUserIsAdmin (app/Http/Middleware/EnsureUserIsAdmin.php)
+   → Cek user.is_admin = true
+   → Digunakan untuk route admin
+
+2. EnsureFrontendRequestsAreStateful (Laravel Sanctum)
+   → CSRF protection untuk frontend SPA
+
+
+🗂️ MIGRATION NAMING CONVENTION:
+--------------------------------------------------------------------------------
+Format: {YYYY_MM_DD}_{HHMMSS}_{description}.php
+Contoh:
+- 2024_01_01_000001_create_regions_table.php
+- 2024_01_01_000002_create_users_table.php
+
+
+================================================================================
+📊 SUMMARY
+================================================================================
+
+Type:               Laravel 12 API + Vue.js Frontend
+PHP:                8.2
+Database:           SQLite (dev) / MySQL (prod)
+Auth:               Laravel Sanctum (Token-based)
+Module System:      Yes (AgentSystem, TourTravel)
+Storage:            public/storage → storage/app/public (symlink)
+API Endpoint:       /api/* (from AgentSystem module)
+Admin Middleware:    'admin' (EnsureUserIsAdmin)
+
+================================================================================
