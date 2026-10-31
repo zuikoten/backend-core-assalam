@@ -1,0 +1,817 @@
+================================================================================
+STRUKTUR MODUL TRIP
+Backend Assalam - Tour & Travel
+================================================================================
+Dokumen ini mencakup seluruh tabel untuk Modul Trip.
+Modul Booking dibahas di dokumen terpisah (MODUL_BOOKING_ASSALAM.txt).
+Arsitektur: DDD — Trip adalah domain PRODUK, terpisah dari domain TRANSAKSI.
+================================================================================
+
+
+================================================================================
+BAGIAN 1 — GAMBARAN BESAR & KEPUTUSAN DESAIN
+================================================================================
+
+KONSEP UTAMA:
+  Trip = satu post/halaman detail perjalanan yang tampil di website.
+  Berisi semua informasi yang dibutuhkan customer untuk memutuskan booking.
+
+HIERARKI DATA MODUL TRIP:
+
+  MASTER DATA (referensi):
+  ├── trip_categories         (Umroh, Haji, Wisata Halal — kategori besar)
+  │       └── trip_category_services (Umroh VIP, Umroh Plus, Haji Furoda — variasi)
+  ├── destinations            (Arab Saudi, Turki, Bali, dll)
+  ├── activities              (Snorkeling, Hiking, City Tour, dll)
+  ├── difficulties            (Easy, Moderate, Hard)
+  └── pricing_categories      (Dewasa, Anak-anak, Lansia — master global)
+
+  TRIP (post utama):
+  trips
+  ├── trip_itineraries    (one-to-many — per hari, rich text)
+  ├── trip_packages       (one-to-many — Double/Triple/Quad)
+  │       └── trip_package_prices (one-to-many — harga per pricing_category)
+  ├── trip_batches        (one-to-many — hanya untuk recurring trip)
+  │
+  └── PIVOT (many-to-many dengan master data):
+      ├── trip_destination  (trips ↔ destinations)
+      ├── trip_activity     (trips ↔ activities)
+      └── trip_difficulty   (trips ↔ difficulties)
+      (trip_type: FK langsung, 1 trip = 1 type)
+
+
+KEPUTUSAN DESAIN:
+
+1. TRIP CATEGORIES & SERVICES
+   - trip_categories        = kategori besar (Umroh, Haji, Wisata Halal)
+   - trip_category_services = variasi per kategori (Umroh VIP, Umroh Plus, dst)
+   - Relasi: trip_categories (1) → trip_category_services (many)
+   - Di form posting trip: pilih kategori dulu → service muncul otomatis
+   - Keduanya wajib dipilih (NOT NULL di trips)
+   - 1 trip hanya punya 1 kategori dan 1 service (FK langsung di trips)
+
+2. DESTINATIONS, ACTIVITIES, DIFFICULTY
+   - Many-to-many via pivot table
+   - Contoh: Trip "Umroh + City Tour Istanbul" punya 2 destination
+     (Arab Saudi & Turki) dan 2 activity (Ibadah Umroh & City Tour)
+
+3. ITINERARY
+   - Tabel terpisah trip_itineraries (bukan JSON)
+   - Alasan: rich text per hari, bisa banyak, perlu query parsial
+   - Sort order bisa diatur (drag & drop di admin)
+
+4. FAQ
+   - JSON di kolom trips.faq
+   - Format: [{"question": "...", "answer": "..."}]
+   - Alasan: selalu ditampilkan sekaligus, tidak perlu query individual
+
+5. GALLERY & VIDEO
+   - JSON di kolom trips
+   - trips.gallery   : array path foto
+   - trips.video_urls: array URL YouTube/Vimeo
+
+6. PACKAGES (Double/Triple/Quad)
+   - Tabel trip_packages (one-to-many dari trips)
+   - 1 package punya banyak harga berdasarkan pricing_category
+   - Harga fix per trip, tidak berubah per tanggal/batch
+
+7. PRICING CATEGORIES (Dewasa/Anak/Lansia)
+   - Master data global di tabel pricing_categories
+   - Harga per kategori disimpan di trip_package_prices (many-to-many)
+
+8. TRIP SCHEDULE: FIXED vs RECURRING
+   - trips.trip_schedule enum('fixed', 'recurring', 'other')
+   - Nama kolom trip_schedule (bukan trip_type) untuk hindari konflik naming
+   - fixed    : departure_date & return_date di tabel trips
+                quota_total di tabel trips
+                team_leader_id di tabel trips
+   - recurring: departure_date & return_date di trip_batches
+                quota_total di trip_batches
+                team_leader_id di trip_batches
+
+9. TEAM LEADER
+   - FK ke tabel staff (bukan users)
+   - Butuh nama (user_profiles) + jabatan (staff.position) sekaligus
+   - Filter hanya staff dengan work_status = 'active'
+
+10. STATUS TRIP
+    - Admin update manual dari dashboard
+    - Perubahan status → fire TripStatusChanged / TripBatchStatusChanged event
+    - Booking module mendengar event ini untuk cascade status booking
+
+
+================================================================================
+BAGIAN 2 — MASTER DATA TABLES
+================================================================================
+
+------------------------------------------------------------------------
+A. TABEL pricing_categories (Master Global)
+   File: database/migrations/xxxx_create_pricing_categories_table.php
+------------------------------------------------------------------------
+
+// Master data kategori harga yang dipakai di semua trip
+// Contoh: Dewasa, Anak-Anak, Lansia, Infant
+
+Schema::create('pricing_categories', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->string('name', 100);        // Dewasa, Anak-Anak, Lansia
+    $table->string('slug', 100)->unique(); // adult, child, senior, infant
+    $table->text('description')->nullable();
+    $table->boolean('is_active')->default(true);
+    $table->timestamps();
+
+    $table->index('slug');
+    $table->index('is_active');
+});
+
+
+------------------------------------------------------------------------
+B. TABEL trip_categories (Master — Kategori Besar)
+   File: database/migrations/xxxx_create_trip_categories_table.php
+------------------------------------------------------------------------
+
+// Kategori besar perjalanan
+// Contoh: Umroh, Haji, Wisata Halal
+
+Schema::create('trip_categories', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->string('name', 100);           // Umroh, Haji, Wisata Halal
+    $table->string('slug', 100)->unique(); // umroh, haji, wisata-halal
+    $table->text('description')->nullable();
+    $table->string('thumbnail')->nullable();
+    $table->boolean('is_active')->default(true);
+    $table->timestamps();
+
+    $table->index('slug');
+    $table->index('is_active');
+});
+
+
+------------------------------------------------------------------------
+B2. TABEL trip_category_services (Master — Variasi per Kategori)
+    File: database/migrations/xxxx_create_trip_category_services_table.php
+------------------------------------------------------------------------
+
+// Variasi spesifik dari setiap kategori besar
+// Contoh:
+//   Umroh       → Umroh VIP, Umroh Plus, Umroh Reguler, Umroh + City Tour
+//   Haji        → Haji Furoda, Haji Plus, Haji Reguler
+//   Wisata Halal → Tour Turki, Tour Maroko, Tour Eropa
+
+Schema::create('trip_category_services', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->unsignedBigInteger('trip_category_id');
+
+    $table->string('name', 100);
+    $table->string('slug', 100)->unique();
+    $table->text('description')->nullable();
+    $table->string('thumbnail')->nullable();
+    $table->boolean('is_active')->default(true);
+    $table->timestamps();
+
+    $table->foreign('trip_category_id')
+        ->references('id')->on('trip_categories')->onDelete('cascade');
+
+    $table->index(['trip_category_id', 'is_active']);
+    $table->index('slug');
+});
+
+
+------------------------------------------------------------------------
+C. TABEL destinations (Master)
+   File: database/migrations/xxxx_create_destinations_table.php
+------------------------------------------------------------------------
+
+Schema::create('destinations', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->string('name', 100);           // Arab Saudi, Turki, Bali
+    $table->string('slug', 100)->unique();
+    $table->text('description')->nullable();
+    $table->string('thumbnail')->nullable();
+    $table->boolean('is_active')->default(true);
+    $table->timestamps();
+
+    $table->index('slug');
+    $table->index('is_active');
+});
+
+
+------------------------------------------------------------------------
+D. TABEL activities (Master)
+   File: database/migrations/xxxx_create_activities_table.php
+------------------------------------------------------------------------
+
+Schema::create('activities', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->string('name', 100);           // City Tour, Snorkeling, Hiking
+    $table->string('slug', 100)->unique();
+    $table->text('description')->nullable();
+    $table->string('thumbnail')->nullable();
+    $table->boolean('is_active')->default(true);
+    $table->timestamps();
+
+    $table->index('slug');
+    $table->index('is_active');
+});
+
+
+------------------------------------------------------------------------
+E. TABEL difficulties (Master)
+   File: database/migrations/xxxx_create_difficulties_table.php
+------------------------------------------------------------------------
+
+Schema::create('difficulties', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->string('name', 100);           // Easy, Moderate, Hard
+    $table->string('slug', 100)->unique(); // easy, moderate, hard
+    $table->text('description')->nullable();
+    $table->boolean('is_active')->default(true);
+    $table->timestamps();
+
+    $table->index('slug');
+    $table->index('is_active');
+});
+
+
+================================================================================
+BAGIAN 3 — TABEL UTAMA: trips
+================================================================================
+
+------------------------------------------------------------------------
+F. TABEL trips
+   File: database/migrations/xxxx_create_trips_table.php
+------------------------------------------------------------------------
+
+Schema::create('trips', function (Blueprint $table) {
+    $table->bigIncrements('id');
+
+    // ── Section General ──────────────────────────────────────────
+    $table->string('title');
+    $table->string('slug')->unique();
+    $table->string('trip_code', 50)->unique()->nullable();
+    // Format bebas, contoh: UMR-2026-001
+
+    // Kategori besar — wajib dipilih
+    $table->unsignedBigInteger('trip_category_id');
+    // FK ke trip_categories (Umroh, Haji, Wisata Halal)
+
+    // Variasi kategori — wajib dipilih setelah kategori dipilih
+    $table->unsignedBigInteger('trip_category_service_id');
+    // FK ke trip_category_services (Umroh VIP, Umroh Plus, dll)
+
+    $table->integer('duration_days');
+    $table->integer('duration_nights');
+    // Contoh: 12 hari, 11 malam → "12D11N"
+
+    // ── Trip Schedule: Fixed atau Recurring ──────────────────────
+    $table->enum('trip_schedule', [
+        'fixed',     // tanggal & kuota fix di sini
+        'recurring', // tanggal & kuota ada di trip_batches
+        'other'
+    ])->default('fixed');
+
+    // Hanya diisi jika trip_schedule = 'fixed'
+    $table->date('departure_date')->nullable();
+    $table->date('return_date')->nullable();
+    $table->integer('quota_total')->nullable();
+    $table->unsignedBigInteger('team_leader_id')->nullable();
+    // FK ke staff.id
+
+    // Untuk recurring: rentang waktu trip dibuka
+    $table->date('open_from')->nullable();  // trip buka dari tanggal ini
+    $table->date('open_until')->nullable(); // trip buka sampai tanggal ini
+
+    // ── Section Overview ─────────────────────────────────────────
+    $table->string('overview_title')->nullable();
+    $table->longText('description')->nullable(); // rich text
+
+    // Highlights
+    $table->string('highlights_title')->nullable();
+    $table->json('highlights')->nullable();
+    // Format: ["Mengunjungi Masjidil Haram", "Ziarah Raudhah", ...]
+
+    // ── Section Includes / Excludes ──────────────────────────────
+    $table->string('include_title')->nullable();
+    $table->json('includes')->nullable();
+    // Format: [{"title": "Tiket Pesawat PP", "description": "..."}]
+
+    $table->string('exclude_title')->nullable();
+    $table->json('excludes')->nullable();
+    // Format: [{"title": "Biaya Visa", "description": "..."}]
+
+    // ── Section Map & Gallery ────────────────────────────────────
+    $table->string('map_title')->nullable();
+    $table->string('map_image')->nullable();    // path gambar peta
+    $table->text('map_iframe')->nullable();     // embed iframe Google Maps
+
+    $table->json('gallery')->nullable();
+    // Format: ["uploads/trips/foto1.jpg", "uploads/trips/foto2.jpg"]
+
+    $table->json('video_urls')->nullable();
+    // Format: ["https://youtube.com/...", "https://vimeo.com/..."]
+
+    // ── Section FAQs ─────────────────────────────────────────────
+    $table->string('faq_title')->nullable();
+    $table->json('faq')->nullable();
+    // Format: [{"question": "...", "answer": "..."}]
+
+    // ── Status & Visibility ──────────────────────────────────────
+    $table->enum('status', [
+        'draft',      // belum dipublish, tidak tampil di website
+        'open',       // buka booking
+        'full',       // kuota habis (otomatis via observer/event)
+        'closed',     // tutup booking manual
+        'ongoing',    // sedang berjalan → cascade ke bookings departed
+        'completed',  // selesai → cascade ke bookings returned
+        'cancelled'   // dibatalkan
+    ])->default('draft');
+
+    $table->boolean('is_published')->default(false);
+    $table->string('thumbnail')->nullable();
+
+    // ── Meta ─────────────────────────────────────────────────────
+    $table->unsignedBigInteger('created_by')->nullable();
+
+    $table->timestamps();
+    $table->softDeletes();
+
+    $table->foreign('trip_category_id')
+        ->references('id')->on('trip_categories')->onDelete('restrict');
+    $table->foreign('trip_category_service_id')
+        ->references('id')->on('trip_category_services')->onDelete('restrict');
+    $table->foreign('team_leader_id')
+        ->references('id')->on('staff')->onDelete('set null');
+    $table->foreign('created_by')
+        ->references('id')->on('users')->onDelete('set null');
+
+    $table->index('slug');
+    $table->index('trip_code');
+    $table->index(['trip_category_id', 'status']);
+    $table->index(['trip_category_service_id', 'status']);
+    $table->index(['status', 'is_published']);
+    $table->index('departure_date');
+    $table->index('trip_schedule');
+});
+
+
+================================================================================
+BAGIAN 4 — TABEL RELASI TRIPS
+================================================================================
+
+------------------------------------------------------------------------
+G. TABEL trip_itineraries
+   File: database/migrations/xxxx_create_trip_itineraries_table.php
+------------------------------------------------------------------------
+
+Schema::create('trip_itineraries', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->unsignedBigInteger('trip_id');
+
+    $table->string('day_label', 20);  // "Day 01", "Day 02"
+    $table->string('title');          // "Tiba di Madinah"
+    $table->longText('description');  // rich text, bisa panjang
+    $table->integer('sort_order')->default(1);
+
+    $table->timestamps();
+
+    $table->foreign('trip_id')
+        ->references('id')->on('trips')->onDelete('cascade');
+
+    $table->index(['trip_id', 'sort_order']);
+});
+
+
+------------------------------------------------------------------------
+H. TABEL trip_packages
+   File: database/migrations/xxxx_create_trip_packages_table.php
+------------------------------------------------------------------------
+
+// Package kamar per trip: Double, Triple, Quad
+// 1 trip bisa punya banyak package
+
+Schema::create('trip_packages', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->unsignedBigInteger('trip_id');
+
+    $table->string('name', 100);
+    // "Sekamar Berdua (Double)", "Sekamar Bertiga (Triple)"
+
+    $table->enum('room_type', [
+        'single',  // 1 orang per kamar
+        'double',  // 2 orang per kamar
+        'triple',  // 3 orang per kamar
+        'quad',    // 4 orang per kamar
+    ]);
+
+    $table->integer('min_pax')->default(1);
+    // Minimum pax per booking untuk package ini
+
+    $table->boolean('is_active')->default(true);
+
+    $table->timestamps();
+
+    $table->foreign('trip_id')
+        ->references('id')->on('trips')->onDelete('cascade');
+
+    $table->index(['trip_id', 'is_active']);
+    $table->index('room_type');
+});
+
+
+------------------------------------------------------------------------
+I. TABEL trip_package_prices
+   File: database/migrations/xxxx_create_trip_package_prices_table.php
+------------------------------------------------------------------------
+
+// Harga per pricing_category per package
+// Contoh: Package Double → Dewasa: 34.5jt, Anak: 34.5jt, Lansia: 34.5jt
+
+Schema::create('trip_package_prices', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->unsignedBigInteger('trip_package_id');
+    $table->unsignedBigInteger('pricing_category_id');
+
+    $table->decimal('regular_price', 15, 2);
+    $table->boolean('is_sale')->default(false);
+    $table->decimal('sale_price', 15, 2)->nullable();
+    // Harga aktif = is_sale ? sale_price : regular_price
+
+    $table->boolean('is_active')->default(true);
+
+    $table->timestamps();
+
+    $table->foreign('trip_package_id')
+        ->references('id')->on('trip_packages')->onDelete('cascade');
+    $table->foreign('pricing_category_id')
+        ->references('id')->on('pricing_categories')->onDelete('restrict');
+
+    // Satu package tidak boleh punya 2 harga untuk kategori yang sama
+    $table->unique(['trip_package_id', 'pricing_category_id']);
+
+    $table->index(['trip_package_id', 'is_active']);
+});
+
+
+------------------------------------------------------------------------
+J. TABEL trip_batches (hanya untuk recurring trip)
+   File: database/migrations/xxxx_create_trip_batches_table.php
+------------------------------------------------------------------------
+
+Schema::create('trip_batches', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->unsignedBigInteger('trip_id');
+
+    $table->string('batch_name')->nullable();
+    // Opsional, contoh: "Batch Januari 2026", "Gelombang 1"
+
+    $table->date('departure_date');
+    $table->date('return_date');
+
+    $table->integer('quota_total');
+
+    $table->unsignedBigInteger('team_leader_id')->nullable();
+    // FK ke staff.id
+
+    $table->enum('status', [
+        'open',       // buka booking
+        'full',       // kuota habis
+        'closed',     // tutup manual
+        'ongoing',    // sedang berjalan
+        'completed',  // selesai
+        'cancelled'   // dibatalkan
+    ])->default('open');
+
+    $table->text('notes')->nullable();
+    $table->timestamps();
+
+    $table->foreign('trip_id')
+        ->references('id')->on('trips')->onDelete('cascade');
+    $table->foreign('team_leader_id')
+        ->references('id')->on('staff')->onDelete('set null');
+
+    $table->index(['trip_id', 'status']);
+    $table->index('departure_date');
+    $table->index('status');
+});
+
+
+================================================================================
+BAGIAN 5 — PIVOT TABLES (Many-to-Many)
+================================================================================
+
+------------------------------------------------------------------------
+K. PIVOT trip_destination
+   File: database/migrations/xxxx_create_trip_destination_table.php
+------------------------------------------------------------------------
+
+Schema::create('trip_destination', function (Blueprint $table) {
+    $table->unsignedBigInteger('trip_id');
+    $table->unsignedBigInteger('destination_id');
+
+    $table->primary(['trip_id', 'destination_id']);
+
+    $table->foreign('trip_id')
+        ->references('id')->on('trips')->onDelete('cascade');
+    $table->foreign('destination_id')
+        ->references('id')->on('destinations')->onDelete('cascade');
+});
+
+
+------------------------------------------------------------------------
+L. PIVOT trip_activity
+   File: database/migrations/xxxx_create_trip_activity_table.php
+------------------------------------------------------------------------
+
+Schema::create('trip_activity', function (Blueprint $table) {
+    $table->unsignedBigInteger('trip_id');
+    $table->unsignedBigInteger('activity_id');
+
+    $table->primary(['trip_id', 'activity_id']);
+
+    $table->foreign('trip_id')
+        ->references('id')->on('trips')->onDelete('cascade');
+    $table->foreign('activity_id')
+        ->references('id')->on('activities')->onDelete('cascade');
+});
+
+
+------------------------------------------------------------------------
+M. PIVOT trip_difficulty
+   File: database/migrations/xxxx_create_trip_difficulty_table.php
+------------------------------------------------------------------------
+
+Schema::create('trip_difficulty', function (Blueprint $table) {
+    $table->unsignedBigInteger('trip_id');
+    $table->unsignedBigInteger('difficulty_id');
+
+    $table->primary(['trip_id', 'difficulty_id']);
+
+    $table->foreign('trip_id')
+        ->references('id')->on('trips')->onDelete('cascade');
+    $table->foreign('difficulty_id')
+        ->references('id')->on('difficulties')->onDelete('cascade');
+});
+
+
+================================================================================
+BAGIAN 6 — ARSITEKTUR DDD: MODUL TRIP
+================================================================================
+
+------------------------------------------------------------------------
+STRUKTUR DIREKTORI MODUL TRIP
+------------------------------------------------------------------------
+
+app/Modules/Trip/
+├── Models/
+│   ├── Trip.php
+│   ├── TripItinerary.php
+│   ├── TripPackage.php
+│   ├── TripPackagePrice.php
+│   ├── TripBatch.php
+│   └── MasterData/
+│       ├── TripCategory.php
+│       ├── TripCategoryService.php
+│       ├── Destination.php
+│       ├── Activity.php
+│       ├── Difficulty.php
+│       └── PricingCategory.php
+├── Controllers/
+│   ├── TripController.php         → CRUD trip
+│   ├── TripBatchController.php    → CRUD batch (recurring)
+│   ├── TripPackageController.php  → CRUD package & harga
+│   └── MasterData/
+│       ├── TripCategoryController.php
+│       ├── TripCategoryServiceController.php
+│       ├── DestinationController.php
+│       ├── ActivityController.php
+│       ├── DifficultyController.php
+│       └── PricingCategoryController.php
+├── Services/
+│   ├── TripService.php            → create/update trip + relasi
+│   └── TripStatusService.php      → handle perubahan status trip
+├── Events/
+│   ├── TripStatusChanged.php      → didengar Booking module
+│   └── TripBatchStatusChanged.php → didengar Booking module
+├── Listeners/
+│   ├── OnTripQuotaFull.php        → terima dari Booking module
+│   └── OnTripBatchQuotaFull.php   → terima dari Booking module
+├── Observers/
+│   └── TripObserver.php           → fire event saat status berubah
+└── Providers/
+    └── TripServiceProvider.php
+
+
+------------------------------------------------------------------------
+EVENTS & LISTENERS MODUL TRIP
+------------------------------------------------------------------------
+
+EVENT YANG DIKIRIM (didengar Booking module):
+  TripStatusChanged      (property: Trip $trip, string $oldStatus, string $newStatus)
+  TripBatchStatusChanged (property: TripBatch $batch, string $oldStatus, string $newStatus)
+
+EVENT YANG DITERIMA (dikirim Booking module):
+  TripQuotaFull      → OnTripQuotaFull      → trips.status = 'full'
+  TripBatchQuotaFull → OnTripBatchQuotaFull → trip_batches.status = 'full'
+
+
+------------------------------------------------------------------------
+CONTOH TripObserver — fire event saat status berubah
+------------------------------------------------------------------------
+
+// app/Modules/Trip/Observers/TripObserver.php
+public function updated(Trip $trip): void
+{
+    if ($trip->isDirty('status')) {
+        event(new TripStatusChanged(
+            trip: $trip,
+            oldStatus: $trip->getOriginal('status'),
+            newStatus: $trip->status
+        ));
+    }
+}
+
+// app/Modules/Trip/Observers/TripBatchObserver.php
+public function updated(TripBatch $batch): void
+{
+    if ($batch->isDirty('status')) {
+        event(new TripBatchStatusChanged(
+            batch: $batch,
+            oldStatus: $batch->getOriginal('status'),
+            newStatus: $batch->status
+        ));
+    }
+}
+
+
+================================================================================
+BAGIAN 7 — CATATAN TAMBAHAN
+================================================================================
+
+1. HARGA AKTIF PER PACKAGE PRICE
+   // Di TripPackagePrice model:
+   public function getActivePriceAttribute(): float
+   {
+       return $this->is_sale && $this->sale_price
+           ? $this->sale_price
+           : $this->regular_price;
+   }
+
+2. DURASI FORMAT
+   // Helper untuk display "12D11N":
+   $duration = "{$trip->duration_days}D{$trip->duration_nights}N";
+
+3. SISA KUOTA TRIP (dari Booking module via KuotaCheckerService)
+   // Trip fixed:
+   sisa = trips.quota_total - SUM(bookings.total_pax
+          WHERE trip_id = x AND status != 'cancelled')
+
+   // Trip recurring (per batch):
+   sisa = trip_batches.quota_total - SUM(bookings.total_pax
+          WHERE trip_batch_id = x AND status != 'cancelled')
+
+4. FILTER TEAM LEADER
+   // Saat admin pilih team leader di form trip/batch:
+   Staff::where('work_status', 'active')
+        ->whereNull('end_date')
+        ->with('user.profile')
+        ->get();
+   // Display: "{full_name} — {position}"
+
+5. TRIP CODE GENERATOR (opsional, bisa manual)
+   // Contoh format: UMR-2026-001
+   // UMR = kode trip_type, 2026 = tahun, 001 = urutan
+   // Bisa di-generate di TripObserver saat creating jika trip_code null
+
+6. SLUG GENERATOR
+   // Di TripObserver saat creating:
+   $trip->slug = Str::slug($trip->title) . '-' . substr(uniqid(), -4);
+   // Contoh: umroh-ramadan-1447h-a3f2
+
+7. JSON FORMAT REFERENSI
+   // highlights:
+   ["Mengunjungi Masjidil Haram", "Ziarah Raudhah", "Tour Kota Madinah"]
+
+   // includes:
+   [
+     {"title": "Tiket Pesawat PP", "description": "Via Saudi Airlines"},
+     {"title": "Hotel Bintang 5", "description": "Dekat Masjidil Haram"}
+   ]
+
+   // excludes:
+   [
+     {"title": "Biaya Visa", "description": "Diurus sendiri"},
+     {"title": "Pengeluaran Pribadi", "description": null}
+   ]
+
+   // faq:
+   [
+     {"question": "Apakah perjalanan ini aman?", "answer": "Ya, sangat aman..."},
+     {"question": "Berapa batas usia?", "answer": "Minimal 12 tahun..."}
+   ]
+
+   // gallery:
+   ["uploads/trips/foto1.jpg", "uploads/trips/foto2.jpg"]
+
+   // video_urls:
+   ["https://youtube.com/watch?v=xxx", "https://vimeo.com/xxx"]
+
+
+================================================================================
+BAGIAN 8 — URUTAN MIGRATION & CHECKLIST DEVELOPER
+================================================================================
+
+------------------------------------------------------------------------
+URUTAN MIGRATION (ikuti urutan ini agar FK tidak error):
+------------------------------------------------------------------------
+
+1.  create_trip_categories_table
+2.  create_trip_category_services_table
+3.  create_destinations_table
+4.  create_activities_table
+5.  create_difficulties_table
+6.  create_pricing_categories_table
+7.  create_trips_table
+8.  create_trip_itineraries_table
+9.  create_trip_packages_table
+10. create_trip_package_prices_table
+11. create_trip_batches_table
+12. create_trip_destination_table    (pivot)
+13. create_trip_activity_table       (pivot)
+14. create_trip_difficulty_table     (pivot)
+
+
+------------------------------------------------------------------------
+CHECKLIST DEVELOPER
+------------------------------------------------------------------------
+
+MIGRATIONS:
+[ ] Buat semua migration sesuai urutan di atas (14 file)
+
+MODELS:
+[ ] PricingCategory.php       : fillable, scopes (active)
+[ ] TripCategory.php          : fillable, hasMany TripCategoryService, hasMany Trip
+[ ] TripCategoryService.php   : fillable, belongsTo TripCategory, hasMany Trip
+[ ] Destination.php           : fillable, belongsToMany Trip
+[ ] Activity.php              : fillable, belongsToMany Trip
+[ ] Difficulty.php            : fillable, belongsToMany Trip
+[ ] Trip.php
+    - fillable, casts (highlights/includes/excludes/faq/gallery/video_urls → array)
+    - belongsTo TripCategory
+    - belongsTo TripCategoryService
+    - belongsTo Staff as teamLeader
+    - hasMany TripItinerary (ordered by sort_order)
+    - hasMany TripPackage
+    - hasMany TripBatch
+    - belongsToMany Destination
+    - belongsToMany Activity
+    - belongsToMany Difficulty
+    - Scope: published(), byCategory($categoryId), bySchedule($type), available()
+[ ] TripItinerary.php         : fillable, belongsTo Trip, ordered by sort_order
+[ ] TripPackage.php           : fillable, belongsTo Trip, hasMany TripPackagePrice
+[ ] TripPackagePrice.php      : fillable, belongsTo TripPackage & PricingCategory
+                                Accessor: getActivePriceAttribute()
+[ ] TripBatch.php             : fillable, belongsTo Trip & Staff as teamLeader
+                                Scope: open(), byStatus($status)
+
+OBSERVERS:
+[ ] TripObserver.php
+    → creating  : generate slug, trip_code (jika kosong)
+    → updated   : fire TripStatusChanged event jika status berubah
+[ ] TripBatchObserver.php
+    → updated   : fire TripBatchStatusChanged event jika status berubah
+
+EVENTS:
+[ ] TripStatusChanged.php      (Trip $trip, string $oldStatus, string $newStatus)
+[ ] TripBatchStatusChanged.php (TripBatch $batch, string $oldStatus, string $newStatus)
+
+LISTENERS:
+[ ] OnTripQuotaFull.php      → update trips.status = 'full'
+[ ] OnTripBatchQuotaFull.php → update trip_batches.status = 'full'
+
+SERVICES:
+[ ] TripService.php
+    → createTrip()  : create trip + sync destinations/activities/difficulties
+    → updateTrip()  : update trip + sync relasi many-to-many
+[ ] TripStatusService.php
+    → changeStatus(): validasi transisi status, update, fire event
+
+SEEDERS (master data):
+[ ] TripCategorySeeder        : Umroh, Haji, Wisata Halal
+[ ] TripCategoryServiceSeeder : Umroh VIP, Umroh Plus, Umroh Reguler,
+                                Haji Furoda, Haji Plus, Tour Turki, dll
+[ ] DestinationSeeder         : Arab Saudi, Turki, Bali, dll
+[ ] ActivitySeeder            : City Tour, Ibadah, Snorkeling, dll
+[ ] DifficultySeeder          : Easy, Moderate, Hard
+[ ] PricingCategorySeeder     : Dewasa, Anak-Anak, Lansia, Infant
+
+PROVIDERS:
+[ ] TripServiceProvider.php
+    → register observers (Trip, TripBatch)
+    → daftarkan listeners:
+      TripQuotaFull      → OnTripQuotaFull
+      TripBatchQuotaFull → OnTripBatchQuotaFull
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================

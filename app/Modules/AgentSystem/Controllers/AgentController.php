@@ -28,17 +28,23 @@ class AgentController extends Controller
     public function register(RegisterAgentRequest $request)
     {
         return DB::transaction(function () use ($request) {
-            // Create user
+            // Create user (tidak lagi menggunakan field 'role' yang sudah dihapus)
             $user = User::create([
                 'email' => $request->email,
                 'phone' => $request->phone,
                 'whatsapp' => $request->whatsapp,
                 'password' => Hash::make($request->password),
-                'role' => 'pending',
                 'status' => 'pending'
             ]);
 
-            // Get upline
+            // Assign role 'agent' ke user via user_roles pivot table
+            $user->assignRole('agent');
+
+            // Get upline with feature flag validation
+            $uplineRule = config('business_rules.agent_requires_upline')
+                ? 'required|exists:agents,id'
+                : 'nullable|exists:agents,id';
+
             $uplineId = null;
             if ($request->upline_agent_code) {
                 $upline = Agent::where('agent_code', $request->upline_agent_code)->firstOrFail();
@@ -49,10 +55,7 @@ class AgentController extends Controller
             $registrationFee = Setting::get('registration_fee_' . $request->agent_level, 0);
             $agent = $user->agent()->create([
                 'agent_level' => $request->agent_level,
-                'full_name' => $request->full_name,
                 'nik' => $request->nik,
-                'birth_date' => $request->birth_date,
-                'gender' => $request->gender,
                 'job' => $request->job,
                 'company_name' => $request->company_name,
                 'upline_id' => $uplineId,
@@ -190,9 +193,20 @@ class AgentController extends Controller
         ]));
     }
 
+    /**
+     * Authorize user untuk mengakses agent tertentu
+     * Menggunakan relasi agent dari user via user->agent (bukan agent_id di users)
+     */
     private function authorizeForUser($user, Agent $agent)
     {
-        if ($user->agent_id !== $agent->user->agent_id && !$user->isAdmin()) {
+        // Cek apakah user adalah admin (sekarang pengecekan dari roles table)
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        // Cek apakah user memiliki agent yang sama dengan agent yang diakses
+        //Gunakan $user->agent?->id karena agent adalah relasi One-to-One
+        if ($user->agent && $user->agent->id !== $agent->id) {
             abort(403, 'Unauthorized');
         }
     }

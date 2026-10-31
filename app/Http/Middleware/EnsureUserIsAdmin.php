@@ -1,5 +1,5 @@
 <?php
-
+// app/Http/Middleware/EnsureUserIsAdmin.php
 namespace App\Http\Middleware;
 
 use Closure;
@@ -15,11 +15,13 @@ class EnsureUserIsAdmin
      */
     public function handle(Request $request, Closure $next): Response
     {
-        if (!$request->user() || !$request->user()->isAdmin()) {
+        $user = $request->user();
+
+        // Cek apakah user login dan memiliki role admin atau super_admin
+        if (!$user || !$user->isAdmin()) {
             abort(403, 'Admin access required');
         }
 
         return $next($request);
     }
 }
-

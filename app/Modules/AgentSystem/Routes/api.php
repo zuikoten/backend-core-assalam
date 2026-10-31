@@ -54,6 +54,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/email/send-otp',  [AuthController::class, 'sendEmailVerification']);
     Route::post('/email/verify',    [AuthController::class, 'verifyEmail']);
 
+    // BONUS ROUTES - Agent & Admin
+    Route::prefix('bonuses')->group(function () {
+        Route::get('/agent/{agent}', [\App\Modules\AgentSystem\Controllers\BonusController::class, 'agentBonuses']);
+        Route::get('/agent/{agent}/payouts', [\App\Modules\AgentSystem\Controllers\BonusController::class, 'agentPayoutHistory']);
+    });
+
     // 👤 AGENT ROUTES (Steps 2-5)
     Route::prefix('agents')->group(function () {
         Route::get('/{agent}/status', [AgentController::class, 'status']);
@@ -70,5 +76,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/documents/{document}/verify', [AdminController::class, 'verifyDocuments']);
         Route::put('/payments/{payment}/verify', [AdminController::class, 'verifyPayment']);
         Route::put('/agents/{agent}/status', [AdminController::class, 'updateAgentStatus']);
+
+        // BONUS PAYOUTS - Admin only
+        Route::prefix('bonuses')->group(function () {
+            Route::get('/payouts/pending', [\App\Modules\AgentSystem\Controllers\BonusController::class, 'pendingPayouts']);
+            Route::post('/payouts/{agent}', [\App\Modules\AgentSystem\Controllers\BonusController::class, 'storePayout']);
+            Route::post('/payouts/{payout}/process', [\App\Modules\AgentSystem\Controllers\BonusController::class, 'processPayout']);
+        });
     });
 });

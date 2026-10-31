@@ -20,7 +20,6 @@ return new class extends Migration
             $table->timestamps();
 
             $table->foreign('agent_id')->references('id')->on('agents')->onDelete('cascade');
-            $table->unique(['agent_id', 'is_primary']);
 
             $table->index(['agent_id']);
             $table->index(['account_number']);

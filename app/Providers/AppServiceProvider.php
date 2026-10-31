@@ -19,6 +19,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // \App\Models\PilgrimProfile::observe(\App\Observers\PilgrimProfileObserver::class); // DISABLED - bonus trigger moved to Booking module
     }
 }

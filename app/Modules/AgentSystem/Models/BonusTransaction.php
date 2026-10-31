@@ -9,18 +9,20 @@ class BonusTransaction extends Model
 {
     use HasFactory;
 
+    protected $table = 'agent_bonus_transactions';
+
     protected $fillable = [
         'agent_id',
-        'pilgrim_count',
+        'pilgrim_id',
+        'from_agent_id',
         'bonus_type',
         'amount',
         'description',
         'status',
-        'payment_id'
+        'payout_id'
     ];
 
     protected $casts = [
-        'pilgrim_count' => 'integer',
         'amount' => 'decimal:2',
     ];
 
@@ -35,9 +37,9 @@ class BonusTransaction extends Model
         return $this->belongsTo(Agent::class);
     }
 
-    public function payment()
+    public function payout()
     {
-        return $this->belongsTo(Payment::class);
+        return $this->belongsTo(AgentBonusPayout::class);
     }
 
     public function getTypeLabelAttribute()
@@ -47,7 +49,7 @@ class BonusTransaction extends Model
 
     public function getTotalAmountAttribute()
     {
-        return $this->amount * $this->pilgrim_count;
+        return $this->amount;
     }
 
     public function scopePaid($query)

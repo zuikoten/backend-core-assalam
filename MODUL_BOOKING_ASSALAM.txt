@@ -1,0 +1,624 @@
+================================================================================
+STRUKTUR MODUL BOOKING (REVISED)
+Backend Assalam - Tour & Travel
+================================================================================
+Dokumen ini mencakup struktur tabel modul Booking saja.
+Modul Trip dibahas di dokumen terpisah.
+Arsitektur: DDD — Booking dan Trip dipisah modul, komunikasi via Events.
+================================================================================
+
+
+================================================================================
+BAGIAN 1 — GAMBARAN BESAR & KEPUTUSAN DESAIN
+================================================================================
+
+KONTEKS:
+  Modul Booking bergantung pada data dari Modul Trip, namun tidak boleh
+  import model Trip secara langsung. Komunikasi lewat Events & Listeners.
+
+HIERARKI BOOKING:
+  trips (dari Modul Trip)
+      ├── [fixed]     → departure_date & return_date ada di trips
+      └── [recurring] → trip_batches → departure_date & return_date per batch
+              ↓
+          packages (Double/Triple/Quad) — dari Modul Trip
+              ↓
+          package_pricing_categories (Dewasa/Anak/Lansia + harga) — dari Modul Trip
+              ↓
+          bookings  ← MULAI DARI SINI (domain Booking)
+              ├── booking_passengers
+              └── booking_payments
+
+
+KEPUTUSAN DESAIN:
+
+1. TRIP FIXED vs RECURRING
+   - fixed     : tanggal ada di tabel trips, kuota di trips
+                 customer tidak perlu pilih tanggal saat booking
+   - recurring : tanggal ada di trip_batches, kuota per batch
+                 customer pilih batch dulu baru pilih package
+   - Dibedakan via trips.trip_schedule enum('fixed', 'recurring', 'other')
+   - trip_batch_id di bookings = nullable (NULL jika trip fixed)
+
+2. KUOTA
+   - Trip fixed    : quota_total di tabel trips
+   - Trip recurring: quota_total di tabel trip_batches
+   - Sisa kuota dihitung dinamis:
+     quota_total - SUM(bookings.total_pax WHERE status != 'cancelled')
+
+3. TEAM LEADER
+   - FK ke tabel staff (bukan users)
+   - Alasan: butuh nama (user_profiles) + jabatan (staff.position) sekaligus
+   - Untuk trip fixed  : team_leader_id di tabel trips
+   - Untuk trip recurring: team_leader_id di tabel trip_batches
+   - Filter hanya staff dengan work_status = 'active'
+
+4. STATUS CASCADE
+   - Trip fixed    : admin update trips.status
+                     → TripStatusChanged event → Booking listener update bookings
+   - Trip recurring: admin update trip_batches.status
+                     → TripBatchStatusChanged event → Booking listener update bookings
+   - Mapping status:
+     'ongoing'   → bookings.status = 'departed'
+     'completed' → bookings.status = 'returned'
+     'cancelled' → bookings.status = 'cancelled'
+
+5. BOOKING MANDIRI vs VIA AGEN
+   - Mandiri : agent_id = NULL, bisa N pax, data di booking_passengers
+   - Via agen: agent_id = terisi, selalu 1 pax, data prefill dari pilgrim_profiles
+   - Bonus hanya di-generate untuk booking via agen saat payment confirmed
+
+6. PEMBAYARAN
+   - Bayar penuh di awal (lunas sekaligus)
+   - 1 booking = 1 payment record
+   - Bonus agen di-trigger saat booking_payments.status → 'success'
+
+7. HARGA SNAPSHOT
+   - Harga per passenger disimpan saat booking (tidak ikut perubahan harga trip)
+   - Kolom price di booking_passengers adalah snapshot harga saat transaksi
+
+
+================================================================================
+BAGIAN 2 — STRUKTUR TABEL LENGKAP
+================================================================================
+
+CATATAN:
+  Tabel trips, trip_batches, packages, package_pricing_categories
+  ada di Modul Trip — tidak dibuat di sini.
+  Modul Booking hanya membuat tabel berikut.
+
+------------------------------------------------------------------------
+URUTAN PEMBUATAN MIGRATION:
+1. bookings
+2. booking_passengers
+3. booking_payments
+------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------
+A. TABEL bookings
+   File: database/migrations/xxxx_create_bookings_table.php
+   Modul: Booking
+------------------------------------------------------------------------
+
+Schema::create('bookings', function (Blueprint $table) {
+    $table->bigIncrements('id');
+
+    // Nomor booking unik untuk display ke customer
+    // Format: BK-YYYYMMDD-XXXX  contoh: BK-20260501-A3F2
+    $table->string('booking_number', 20)->unique();
+
+    // ── Relasi ke Modul Trip ──────────────────────────────────────
+    $table->unsignedBigInteger('trip_id');
+    // FK ke trips — tidak pakai foreign() karena cross-module
+    // Validasi existence dilakukan di BookingService layer
+
+    $table->unsignedBigInteger('trip_batch_id')->nullable();
+    // NULL  = trip fixed (tanggal sudah fix di trips)
+    // Terisi = trip recurring (customer pilih batch ini)
+
+    $table->unsignedBigInteger('package_id');
+    // Package yang dipilih customer (Double/Triple/Quad)
+
+    // ── Relasi ke User & Agen ─────────────────────────────────────
+    $table->unsignedBigInteger('user_id');
+    // User yang melakukan booking (pemesan utama)
+
+    $table->unsignedBigInteger('agent_id')->nullable();
+    // NULL  = booking mandiri (tidak ada komisi)
+    // Terisi = booking via agen (trigger bonus)
+
+    // ── Summary Booking ───────────────────────────────────────────
+    $table->integer('total_pax');
+    // Total jumlah orang (semua kategori digabung)
+    // Dipakai untuk hitung sisa kuota trip
+
+    $table->decimal('total_amount', 15, 2);
+    // Total harga = SUM(booking_passengers.price)
+    // Snapshot saat booking
+
+    // ── Status ────────────────────────────────────────────────────
+    $table->enum('status', [
+        'pending',    // baru booking, menunggu pembayaran
+        'confirmed',  // sudah lunas, menunggu keberangkatan
+        'departed',   // sedang dalam perjalanan
+        'returned',   // sudah pulang
+        'cancelled',  // dibatalkan
+    ])->default('pending');
+
+    $table->enum('document_status', [
+        'incomplete', // ada passenger yang belum lengkap dokumen
+        'complete',   // semua passenger sudah lengkap dokumen
+        'verified',   // sudah diverifikasi admin
+    ])->default('incomplete');
+
+    // ── Catatan ───────────────────────────────────────────────────
+    $table->text('customer_notes')->nullable();
+    $table->text('admin_notes')->nullable();
+
+    // Untuk booking via agen, ini diisi user_id si agen
+    $table->unsignedBigInteger('created_by')->nullable();
+
+    $table->timestamps();
+    $table->softDeletes();
+
+    // Foreign keys (hanya ke tabel dalam modul yang sama / modul user)
+    $table->foreign('user_id')
+        ->references('id')->on('users')->onDelete('restrict');
+    $table->foreign('agent_id')
+        ->references('id')->on('agents')->onDelete('set null');
+    $table->foreign('created_by')
+        ->references('id')->on('users')->onDelete('set null');
+
+    // trip_id, trip_batch_id, package_id TIDAK diberi foreign key constraint
+    // karena cross-module — validasi di application layer (BookingService)
+
+    $table->index(['trip_id', 'status']);
+    $table->index(['trip_batch_id', 'status']);
+    $table->index(['user_id', 'status']);
+    $table->index('agent_id');
+    $table->index('booking_number');
+    $table->index('document_status');
+    $table->index('status');
+});
+
+
+------------------------------------------------------------------------
+B. TABEL booking_passengers
+   File: database/migrations/xxxx_create_booking_passengers_table.php
+   Modul: Booking
+------------------------------------------------------------------------
+
+Schema::create('booking_passengers', function (Blueprint $table) {
+    $table->bigIncrements('id');
+    $table->unsignedBigInteger('booking_id');
+
+    // Link ke pilgrim_profile jika passenger punya akun
+    // Pemesan utama (is_primary=true) selalu ada pilgrim_profile_id
+    // Orang ke-2/3/4 nullable (belum tentu punya akun)
+    $table->unsignedBigInteger('pilgrim_profile_id')->nullable();
+
+    // Apakah ini pemesan utama
+    $table->boolean('is_primary')->default(false);
+
+    // Kategori harga yang dipilih untuk passenger ini
+    // FK cross-module ke package_pricing_categories
+    $table->unsignedBigInteger('pricing_category_id');
+    // Tidak pakai foreign() — cross-module, validasi di service layer
+
+    // ── Data Diri ─────────────────────────────────────────────────
+    // Untuk pemesan utama: di-prefill dari pilgrim_profiles + user_profiles
+    // Untuk orang lain: diisi manual
+    $table->string('full_name');
+    $table->string('nik', 16)->nullable();
+    $table->string('passport_number', 20)->nullable();
+    $table->date('passport_expiry')->nullable();
+    $table->date('birth_date')->nullable();
+    $table->enum('gender', ['L', 'P'])->nullable();
+    $table->string('phone', 20)->nullable();
+
+    // ── Dokumen ───────────────────────────────────────────────────
+    $table->string('foto_ktp')->nullable();
+    $table->string('foto_passport')->nullable();
+
+    // ── Harga Snapshot ────────────────────────────────────────────
+    // Harga per orang ini saat booking dilakukan
+    // Tidak berubah meski harga trip diupdate setelahnya
+    $table->decimal('price', 15, 2);
+
+    // ── Status Dokumen per Passenger ──────────────────────────────
+    $table->enum('document_status', [
+        'incomplete',
+        'complete',
+        'verified',
+    ])->default('incomplete');
+
+    $table->timestamps();
+
+    $table->foreign('booking_id')
+        ->references('id')->on('bookings')->onDelete('cascade');
+    $table->foreign('pilgrim_profile_id')
+        ->references('id')->on('pilgrim_profiles')->onDelete('set null');
+
+    // pricing_category_id tidak diberi FK — cross-module
+
+    $table->index('booking_id');
+    $table->index('pilgrim_profile_id');
+    $table->index('document_status');
+    $table->index('is_primary');
+});
+
+
+------------------------------------------------------------------------
+C. TABEL booking_payments
+   File: database/migrations/xxxx_create_booking_payments_table.php
+   Modul: Booking
+------------------------------------------------------------------------
+
+Schema::create('booking_payments', function (Blueprint $table) {
+    $table->bigIncrements('id');
+
+    // unique karena 1 booking = 1 payment (bayar penuh di awal)
+    $table->unsignedBigInteger('booking_id')->unique();
+
+    $table->decimal('amount', 15, 2);
+
+    $table->enum('payment_method', [
+        'transfer',
+        'virtual_account',
+        'cash',
+    ])->default('transfer');
+
+    // Info rekening pengirim (diisi manual oleh customer saat upload bukti)
+    $table->string('bank_name')->nullable();
+    $table->string('account_name')->nullable();
+    $table->string('transaction_ref', 100)->nullable();
+
+    $table->enum('status', [
+        'pending',   // menunggu konfirmasi admin
+        'success',   // pembayaran dikonfirmasi → trigger bonus
+        'failed',    // gagal / expired
+        'refunded',  // dikembalikan saat cancel
+    ])->default('pending');
+
+    // Bukti pembayaran (path file upload)
+    $table->string('proof_of_payment')->nullable();
+
+    $table->timestamp('paid_at')->nullable();
+
+    // Admin yang konfirmasi
+    $table->unsignedBigInteger('confirmed_by')->nullable();
+    $table->timestamp('confirmed_at')->nullable();
+
+    // Catatan admin (misal alasan refund, penolakan, dll)
+    $table->text('notes')->nullable();
+
+    $table->timestamps();
+
+    $table->foreign('booking_id')
+        ->references('id')->on('bookings')->onDelete('cascade');
+    $table->foreign('confirmed_by')
+        ->references('id')->on('users')->onDelete('set null');
+
+    $table->index('status');
+    $table->index('paid_at');
+});
+
+
+================================================================================
+BAGIAN 3 — ALUR BISNIS
+================================================================================
+
+------------------------------------------------------------------------
+ALUR A: BOOKING MANDIRI — TRIP FIXED
+------------------------------------------------------------------------
+
+1. Customer buka halaman trip (trip_schedule = 'fixed')
+2. Pilih package (Double/Triple/Quad)
+3. Pilih quantity per pricing_category (Dewasa/Anak/Lansia)
+4. Sistem hitung total:
+   total_pax    = SUM semua quantity yang dipilih
+   total_amount = SUM(quantity × harga per pricing_category)
+5. Sistem cek kuota:
+   sisa = trips.quota_total
+        - SUM(bookings.total_pax WHERE trip_id=x AND status != 'cancelled')
+   IF sisa < total_pax → tolak, tampilkan pesan kuota tidak cukup
+6. Buat record bookings:
+   - trip_batch_id = NULL (fixed trip)
+   - agent_id = NULL (mandiri)
+   - status = 'pending'
+7. Buat N record booking_passengers:
+   - Passenger pertama (is_primary=true): prefill dari pilgrim_profiles
+   - Passenger lain: form kosong, diisi manual
+8. Buat record booking_payments (status = 'pending')
+9. Customer upload bukti bayar → booking_payments.proof_of_payment terisi
+10. Admin konfirmasi pembayaran:
+    - booking_payments.status = 'success', paid_at = now()
+    - bookings.status = 'confirmed'
+    - Fire event: BookingConfirmed(booking)
+    → AgentSystem listener: skip (agent_id NULL)
+    → Booking listener: cek kuota → update trips.status = 'full' jika habis
+11. Customer lengkapi dokumen semua passenger
+    → BookingPassengerObserver sync document_status ke bookings
+
+
+------------------------------------------------------------------------
+ALUR B: BOOKING MANDIRI — TRIP RECURRING
+------------------------------------------------------------------------
+
+1. Customer buka halaman trip (trip_schedule = 'recurring')
+2. Pilih batch (tanggal keberangkatan yang tersedia)
+   → Sistem tampilkan daftar trip_batches dengan status = 'open'
+3. Pilih package → pricing_category → quantity (sama seperti Alur A)
+4. Sistem cek kuota dari trip_batches.quota_total (bukan trips)
+5. Buat record bookings:
+   - trip_batch_id = batch yang dipilih (NOT NULL)
+   - agent_id = NULL
+6. Lanjut sama seperti Alur A step 7-11
+
+
+------------------------------------------------------------------------
+ALUR C: BOOKING VIA AGEN
+------------------------------------------------------------------------
+
+1. Agen buka dashboard → pilih jamaah dari pilgrim_profiles
+2. Pilih trip + batch (jika recurring) + package
+3. Selalu 1 pax, pricing_category sesuai data jamaah
+4. Buat record bookings:
+   - agent_id = agen.id (terisi)
+   - total_pax = 1
+   - created_by = agen.user_id
+5. Buat 1 record booking_passengers:
+   - is_primary = true
+   - pilgrim_profile_id = jamaah.id
+   - Data prefill dari pilgrim_profiles + user_profiles
+6. Admin konfirmasi pembayaran:
+   - Fire event: BookingConfirmed(booking)
+   → AgentSystem listener: GenerateBonusService::generateForBooking($booking)
+     - fixed_fee    → agen
+     - coaching_fee → upline agen (jika ada)
+     - region_bonus → cabang wilayah agen (jika ada)
+
+
+------------------------------------------------------------------------
+ALUR D: CASCADE STATUS → BOOKING
+------------------------------------------------------------------------
+
+// Untuk trip FIXED — TripStatusChanged event:
+Trip.status = 'ongoing'   → bookings WHERE trip_id=x, status='confirmed'
+                             → update status = 'departed'
+Trip.status = 'completed' → bookings WHERE trip_id=x, status='departed'
+                             → update status = 'returned'
+Trip.status = 'cancelled' → bookings WHERE trip_id=x,
+                             status IN ('pending','confirmed')
+                             → update status = 'cancelled'
+
+// Untuk trip RECURRING — TripBatchStatusChanged event:
+TripBatch.status = 'ongoing'   → bookings WHERE trip_batch_id=x
+TripBatch.status = 'completed' → bookings WHERE trip_batch_id=x
+TripBatch.status = 'cancelled' → bookings WHERE trip_batch_id=x
+(logic sama seperti di atas)
+
+
+------------------------------------------------------------------------
+ALUR E: CEK KUOTA & SET TRIP/BATCH FULL
+------------------------------------------------------------------------
+
+// Dipanggil saat BookingConfirmed event
+
+// Trip FIXED:
+$totalBooked = Booking::where('trip_id', $booking->trip_id)
+    ->whereNotIn('status', ['cancelled'])
+    ->sum('total_pax');
+
+$quota = Trip::find($booking->trip_id)->quota_total; // query cross-module
+
+if ($totalBooked >= $quota) {
+    // Fire TripQuotaFull event → Trip module set status = 'full'
+    event(new TripQuotaFull($booking->trip_id));
+}
+
+// Trip RECURRING:
+$totalBooked = Booking::where('trip_batch_id', $booking->trip_batch_id)
+    ->whereNotIn('status', ['cancelled'])
+    ->sum('total_pax');
+
+$quota = TripBatch::find($booking->trip_batch_id)->quota_total;
+
+if ($totalBooked >= $quota) {
+    event(new TripBatchQuotaFull($booking->trip_batch_id));
+}
+
+
+================================================================================
+BAGIAN 4 — ARSITEKTUR DDD: CROSS-MODULE COMMUNICATION
+================================================================================
+
+------------------------------------------------------------------------
+STRUKTUR DIREKTORI MODUL BOOKING
+------------------------------------------------------------------------
+
+app/Modules/Booking/
+├── Models/
+│   ├── Booking.php
+│   ├── BookingPassenger.php
+│   └── BookingPayment.php
+├── Controllers/
+│   ├── BookingController.php
+│   └── BookingPaymentController.php
+├── Services/
+│   ├── BookingService.php
+│   │   → handle create booking, validasi kuota, prefill passenger
+│   ├── BookingPaymentService.php
+│   │   → handle konfirmasi payment, fire BookingConfirmed event
+│   └── KuotaCheckerService.php
+│       → query sisa kuota (trip fixed vs recurring)
+├── Events/
+│   ├── BookingConfirmed.php
+│   ├── TripQuotaFull.php        ← dikirim ke Trip module
+│   └── TripBatchQuotaFull.php   ← dikirim ke Trip module
+├── Listeners/
+│   ├── OnTripStatusChanged.php      ← terima dari Trip module
+│   └── OnTripBatchStatusChanged.php ← terima dari Trip module
+├── Observers/
+│   ├── BookingObserver.php
+│   │   → generate booking_number saat created
+│   └── BookingPassengerObserver.php
+│       → sync document_status ke parent booking
+└── Providers/
+    └── BookingServiceProvider.php
+        → daftarkan semua listeners
+
+
+------------------------------------------------------------------------
+EVENTS & LISTENERS — RINGKASAN
+------------------------------------------------------------------------
+
+EVENT                    │ DIKIRIM OLEH  │ DIDENGAR OLEH
+─────────────────────────┼───────────────┼──────────────────────────────
+BookingConfirmed         │ Booking       │ AgentSystem → GenerateBonus
+                         │               │ Booking     → CekKuota
+TripQuotaFull            │ Booking       │ Trip        → set status 'full'
+TripBatchQuotaFull       │ Booking       │ Trip        → set batch 'full'
+TripStatusChanged        │ Trip          │ Booking     → cascade ke bookings
+TripBatchStatusChanged   │ Trip          │ Booking     → cascade ke bookings
+
+
+------------------------------------------------------------------------
+ATURAN CROSS-MODULE
+------------------------------------------------------------------------
+
+✅ BOLEH:
+   - Simpan trip_id, trip_batch_id, package_id, pricing_category_id
+     sebagai integer di tabel bookings (tanpa DB foreign key constraint)
+   - Validasi existence via service layer sebelum insert
+   - Komunikasi antar modul via Events
+
+❌ TIDAK BOLEH:
+   - use App\Modules\Trip\Models\Trip di dalam Booking module
+   - Query langsung ke tabel trips/packages dari Booking controller/service
+   - Import model antar modul secara langsung
+
+
+================================================================================
+BAGIAN 5 — CATATAN TAMBAHAN
+================================================================================
+
+1. BOOKING NUMBER GENERATOR
+   // Di BookingObserver.php — saat creating:
+   $booking->booking_number = 'BK-'
+       . date('Ymd') . '-'
+       . strtoupper(substr(uniqid(), -4));
+   // Contoh: BK-20260501-A3F2
+
+2. PREFILL PASSENGER DARI PILGRIM_PROFILES
+   // Di BookingService saat buat booking_passengers:
+   $pilgrimProfile = PilgrimProfile::where('user_id', $booking->user_id)->first();
+   if ($pilgrimProfile) {
+       $passengerData = [
+           'full_name'       => $pilgrimProfile->user->profile->full_name,
+           'nik'             => $pilgrimProfile->nik,
+           'passport_number' => $pilgrimProfile->passport_number,
+           'passport_expiry' => $pilgrimProfile->passport_expiry,
+           // dst...
+           'is_primary'      => true,
+           'pilgrim_profile_id' => $pilgrimProfile->id,
+       ];
+   }
+
+3. SINKRONISASI document_status BOOKING
+   // Di BookingPassengerObserver — saat document_status passenger berubah:
+   $booking = $passenger->booking;
+   $allComplete = $booking->passengers
+       ->every(fn($p) => $p->document_status !== 'incomplete');
+
+   if ($allComplete) {
+       $booking->update(['document_status' => 'complete']);
+   }
+
+4. REFUND SAAT CANCEL
+   - Jika booking.status → 'cancelled' dan payment.status = 'success':
+     → booking_payments.status = 'refunded'
+     → catat penalty dan jumlah refund di notes
+   - Detail mekanisme penalty dibahas terpisah saat implementasi fitur cancel
+
+5. RELASI BOOKING KE AGENT_BONUS_TRANSACTIONS
+   // Tambahkan di agent_bonus_transactions migration:
+   $table->unsignedBigInteger('booking_id')->nullable();
+   // Tidak pakai FK constraint — cross-module
+   // Validasi di GenerateBonusService
+
+
+================================================================================
+BAGIAN 6 — CHECKLIST DEVELOPER
+================================================================================
+
+MIGRATIONS (buat dalam urutan ini):
+[ ] create_bookings_table
+[ ] create_booking_passengers_table
+[ ] create_booking_payments_table
+[ ] Update agent_bonus_transactions: tambah kolom booking_id
+
+MODELS:
+[ ] Booking.php
+    - fillable, casts
+    - belongsTo User, Agent
+    - hasMany BookingPassenger
+    - hasOne BookingPayment
+    - Scope: byTrip($tripId), byBatch($batchId), active()
+
+[ ] BookingPassenger.php
+    - fillable, casts
+    - belongsTo Booking
+    - belongsTo PilgrimProfile (nullable)
+    - Scope: primary(), byDocumentStatus($status)
+
+[ ] BookingPayment.php
+    - fillable, casts
+    - belongsTo Booking
+    - belongsTo User as confirmedBy
+
+OBSERVERS:
+[ ] BookingObserver.php
+    → creating: generate booking_number
+[ ] BookingPassengerObserver.php
+    → updated: sync document_status ke parent booking
+
+EVENTS:
+[ ] BookingConfirmed.php         (property: Booking $booking)
+[ ] TripQuotaFull.php            (property: int $tripId)
+[ ] TripBatchQuotaFull.php       (property: int $tripBatchId)
+
+LISTENERS:
+[ ] OnTripStatusChanged.php
+    → cascade bookings.status berdasarkan trip_id
+[ ] OnTripBatchStatusChanged.php
+    → cascade bookings.status berdasarkan trip_batch_id
+
+SERVICES:
+[ ] BookingService.php
+    → createBooking(): validasi kuota, buat booking + passengers
+    → prefillPrimaryPassenger(): ambil data dari pilgrim_profiles
+
+[ ] BookingPaymentService.php
+    → confirmPayment(): update status, fire BookingConfirmed event
+
+[ ] KuotaCheckerService.php
+    → getRemainingQuota($tripId, $batchId = null): int
+
+[ ] Update GenerateBonusService (AgentSystem module):
+    → generateForBooking(Booking $booking) — ganti dari generateForPilgrim
+    → tambah booking_id ke agent_bonus_transactions
+
+PROVIDERS:
+[ ] BookingServiceProvider.php
+    → register observers
+    → daftarkan listeners:
+      TripStatusChanged      → OnTripStatusChanged
+      TripBatchStatusChanged → OnTripBatchStatusChanged
+      BookingConfirmed       → OnBookingConfirmed (internal cek kuota)
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================

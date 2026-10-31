@@ -14,10 +14,7 @@ return new class extends Migration
             $table->unsignedBigInteger('user_id')->unique();
             $table->enum('agent_level', ['cabang', 'premium']);
             $table->string('agent_code', 20)->unique();
-            $table->string('full_name', 255);
             $table->string('nik', 16)->unique();
-            $table->date('birth_date')->nullable();
-            $table->enum('gender', ['L', 'P'])->nullable();
             $table->string('job')->nullable();
             $table->string('company_name')->nullable();
 

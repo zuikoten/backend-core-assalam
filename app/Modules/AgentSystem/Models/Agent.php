@@ -13,10 +13,7 @@ class Agent extends Model
         'user_id',
         'agent_level',
         'agent_code',
-        'full_name',
         'nik',
-        'birth_date',
-        'gender',
         'job',
         'company_name',
         'upline_id',
@@ -25,7 +22,6 @@ class Agent extends Model
     ];
 
     protected $casts = [
-        'birth_date' => 'date',
         'registration_fee_amount' => 'decimal:2',
     ];
 

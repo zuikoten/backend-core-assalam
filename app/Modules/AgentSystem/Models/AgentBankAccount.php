@@ -34,6 +34,16 @@ class AgentBankAccount extends Model
             ' (' . $this->account_holder . ')';
     }
 
+    public function setPrimary()
+    {
+        // Reset all other accounts for this agent
+        self::where('agent_id', $this->agent_id)
+            ->update(['is_primary' => false]);
+
+        // Set this one as primary
+        $this->update(['is_primary' => true]);
+    }
+
     public function scopePrimary($query)
     {
         return $query->where('is_primary', true);

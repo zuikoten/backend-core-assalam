@@ -1,0 +1,576 @@
+STRUKTUR_DATABASE (mengacu migration saat ini)
+================================================
+
+CATATAN UMUM
+- Semua tabel adalah hasil database migrations di folder: database/migrations.
+- Tipe field mengikuti definisi di migration (Laravel Schema Builder).
+- Beberapa tabel standar Laravel disertakan (cache, jobs, sessions, personal_access_tokens, dll).
+- Beberapa migration wilayah Indonesia menggunakan prefix table dari config('laravolt.indonesia.table_prefix').
+
+------------------------------------------------
+1) Laravel standard
+------------------------------------------------
+
+1.1 cache
+- key (string, PK)
+- value (mediumText)
+- expiration (integer, index)
+
+1.2 cache_locks
+- key (string, PK)
+- owner (string)
+- expiration (integer, index)
+
+1.3 jobs
+- id (bigint, PK)
+- queue (string, index)
+- payload (longText)
+- attempts (tinyint unsigned)
+- reserved_at (uint unsigned nullable)
+- available_at (uint unsigned)
+- created_at (uint unsigned)
+
+1.4 job_batches
+- id (string, PK)
+- name (string)
+- total_jobs (int)
+- pending_jobs (int)
+- failed_jobs (int)
+- failed_job_ids (longText)
+- options (mediumText nullable)
+- cancelled_at (int nullable)
+- created_at (int)
+- finished_at (int nullable)
+
+1.5 failed_jobs
+- id (bigint, PK)
+- uuid (string, unique)
+- connection (text)
+- queue (text)
+- payload (longText)
+- exception (longText)
+- failed_at (timestamp default current)
+
+1.6 sessions
+- id (string, PK)
+- user_id (FK nullable -> users.id)
+- ip_address (string(45) nullable)
+- user_agent (text nullable)
+- payload (longText)
+- last_activity (int, index)
+
+1.7 personal_access_tokens
+- id (bigint, PK)
+- tokenable_type/tokenable_id (morphs)
+- name (text)
+- token (string(64), unique)
+- abilities (text nullable)
+- last_used_at (timestamp nullable)
+- expires_at (timestamp nullable, index)
+- created_at/updated_at
+
+1.8 otp_codes
+- id (bigint, PK)
+- user_id (FK nullable -> users.id)
+- whatsapp (string(20))
+- code (string(100))
+- type (enum: reset_password, claim_account, phone_verify, login)
+- is_used (boolean default false)
+- used_at (timestamp nullable)
+- expires_at (timestamp)
+- created_at/updated_at
+- Index: [whatsapp,type], expires_at
+
+------------------------------------------------
+2) Data master wilayah (Laravolt Indonesia)
+------------------------------------------------
+
+Tabel menggunakan prefix: config('laravolt.indonesia.table_prefix')
+
+2.1 provinces
+- id (big increments)
+- code (char(2), unique)
+- name (string(255))
+- meta (text nullable)
+- timestamps
+
+2.2 cities
+- id (big increments)
+- code (char(4), unique)
+- province_code (char(2))
+- name (string(255))
+- meta (text nullable)
+- timestamps
+- FK: province_code -> provinces.code (onUpdate cascade, onDelete restrict)
+
+2.3 districts
+- id (big increments)
+- code (char(7), unique)
+- city_code (char(4))
+- name (string(255))
+- meta (text nullable)
+- timestamps
+- FK: city_code -> cities.code (onUpdate cascade, onDelete restrict)
+
+2.4 villages
+- id (big increments)
+- code (char(10), unique)
+- district_code (char(7))
+- name (string(255))
+- meta (text nullable)
+- timestamps
+- FK: district_code -> districts.code (onUpdate cascade, onDelete restrict)
+
+------------------------------------------------
+3) Sistem user / authorization
+------------------------------------------------
+
+3.1 regions
+- id (PK)
+- region_type (enum: province, regency, district)
+- code (string(10), unique)
+- name (string(255))
+- parent_id (FK nullable -> regions.id, onDelete set null)
+- timestamps
+- Index: parent_id, code, region_type
+
+3.2 users
+- id (PK)
+- email (string unique)
+- phone (string(20) unique nullable)
+- whatsapp (string(20) unique nullable)
+- password (string)
+- status (enum: pending, active, inactive, suspended, rejected) default pending
+- email_verified (boolean default false)
+- email_verified_at (timestamp nullable)
+- phone_verified (boolean default false)
+- phone_verified_at (timestamp nullable)
+- remember_token (string(100) nullable)
+- last_login_at (timestamp nullable)
+- last_login_ip (string(45) nullable)
+- is_temporary_password (boolean default false)
+- timestamps + softDeletes
+- Index: email, phone, whatsapp, status
+
+3.3 roles
+- id (PK)
+- name (string(50), unique)
+- display_name (string(100) nullable)
+- description (text nullable)
+- is_active (boolean default true)
+- timestamps
+- (seed langsung di migration untuk role dasar)
+
+3.4 user_roles
+- id (PK)
+- user_id (FK -> users.id, onDelete cascade)
+- role_id (FK -> roles.id, onDelete cascade)
+- assigned_at (timestamp nullable)
+- assigned_by (FK nullable -> users.id, onDelete set null)
+- timestamps
+- Unique: [user_id, role_id]
+- Index: user_id, role_id
+
+3.5 user_profiles
+- id (PK)
+- user_id (unique, FK -> users.id, onDelete cascade)
+- full_name (string)
+- avatar (string nullable)
+- birth_date (date nullable)
+- gender (enum: L,P nullable)
+- nationality (string(100) nullable default Indonesia)
+- address (text nullable)
+- city (string(100) nullable)
+- province (string(100) nullable)
+- postal_code (string(10) nullable)
+- bio (text nullable)
+- website (string nullable)
+- social_media (json nullable)
+- language (string(10) default id)
+- timezone (string(50) default Asia/Jakarta)
+- notification_email (boolean default true)
+- notification_whatsapp (boolean default true)
+- timestamps
+
+3.6 staff
+- id (PK)
+- user_id (unique, FK -> users.id onDelete cascade)
+- employee_id (string(20) unique nullable)
+- position (string(100))
+- department (string(100))
+- join_date (date)
+- end_date (date nullable)
+- access_level (enum: viewer, operator, supervisor, manager) default operator
+- supervisor_id (FK nullable -> staff.id, onDelete set null)
+- employment_status (enum: full_time, part_time, contract, intern) default full_time
+- work_status (enum: active, on_leave, resigned, terminated) default active
+- notes (text nullable)
+- timestamps + softDeletes
+- Index: department, access_level, work_status
+
+3.7 password_histories
+- id (PK)
+- user_id (FK -> users.id onDelete cascade)
+- is_temporary (boolean default false)
+- must_change (boolean default false)
+- changed_at (timestamp nullable)
+- timestamps
+- Index: user_id
+
+------------------------------------------------
+4) Agen & proses bonus
+------------------------------------------------
+
+4.1 agents
+- id (PK)
+- user_id (unique, FK -> users.id onDelete cascade)
+- agent_level (enum: cabang, premium)
+- agent_code (string(20) unique)
+- nik (string(16) unique)
+- job (string nullable)
+- company_name (string nullable)
+- upline_id (FK nullable -> agents.id onDelete set null)
+- registration_fee_status (enum: pending, paid, verified) default pending
+- registration_fee_amount (decimal(15,2) default 0)
+- timestamps
+- Index: nik, agent_level, upline_id, registration_fee_status
+
+4.2 agent_addresses
+- id (PK)
+- agent_id (FK -> agents.id onDelete cascade)
+- province_id (FK -> regions.id)
+- regency_id (FK -> regions.id)
+- district_id (FK -> regions.id)
+- village (string(255) nullable)
+- full_address (text)
+- postal_code (string(10) nullable)
+- is_domicile (boolean default true)
+- timestamps
+- Index: agent_id, province_id
+
+4.3 agent_documents
+- id (PK)
+- agent_id (FK -> agents.id onDelete cascade)
+- document_type (enum: ktp_photo, selfie_ktp, transfer_proof)
+- file_path (string(500))
+- file_size (int nullable)
+- mime_type (string(100) nullable)
+- verification_status (enum: pending, approved, rejected) default pending
+- rejection_reason (text nullable)
+- timestamps
+- Unique: [agent_id, document_type]
+- Index: [agent_id, document_type], verification_status
+
+4.4 agent_bank_accounts
+- id (PK)
+- agent_id (FK -> agents.id onDelete cascade)
+- bank_name (string(100))
+- account_number (string(50))
+- account_holder (string(255))
+- is_primary (boolean default true)
+- timestamps
+- Index: agent_id, account_number
+
+4.5 agent_payments
+- id (PK)
+- agent_id (FK -> agents.id onDelete cascade)
+- amount (decimal(15,2))
+- payment_method (enum: transfer, cash, virtual_account) default transfer
+- bank_account_id (FK nullable -> agent_bank_accounts.id onDelete set null)
+- transaction_ref (string(100) nullable)
+- status (enum: pending, success, failed, refunded) default pending
+- paid_at (timestamp nullable)
+- proof_document_id (FK nullable -> agent_documents.id onDelete set null)
+- notes (text nullable)
+- timestamps
+- Index: agent_id, status
+
+4.6 agent_bonus_payouts
+- id (PK)
+- agent_id (FK -> agents.id onDelete cascade)
+- bank_account_id (FK -> agent_bank_accounts.id onDelete restrict)
+- amount (decimal(15,2))
+- status (enum: pending, processed, failed) default pending
+- transaction_ref (string(100) nullable)
+- paid_at (timestamp nullable)
+- notes (text nullable)
+- processed_by (FK nullable -> users.id onDelete set null)
+- timestamps
+- Index: [agent_id,status], status, paid_at
+
+4.7 agent_bonus_transactions
+- id (PK)
+- agent_id (FK -> agents.id onDelete cascade)
+- pilgrim_id (FK nullable -> pilgrim_profiles.id onDelete set null)
+- from_agent_id (FK nullable -> agents.id onDelete set null)
+- booking_id (FK nullable -> bookings.id onDelete set null)
+- bonus_type (enum: fixed_fee, coaching_fee, region_bonus)
+- amount (decimal(15,2))
+- description (string(500) nullable)
+- status (enum: pending, paid, cancelled) default pending
+- payout_id (FK nullable -> agent_bonus_payouts.id onDelete set null)
+- timestamps
+- Index: [agent_id,status], bonus_type, pilgrim_id, payout_id
+
+4.8 admin_actions
+- id (PK)
+- admin_id (FK -> users.id)
+- agent_id (FK nullable -> agents.id onDelete set null)
+- action_type (enum: approve, reject, verify_doc, update_status, payout_bonus)
+- description (text)
+- old_values (json nullable)
+- new_values (json nullable)
+- created_at (timestamp current)
+- (di migration tidak ada updated_at; hanya created_at)
+
+4.9 settings
+- id (PK)
+- setting_key (string(100) unique)
+- setting_value (text)
+- setting_type (enum: string, number, boolean, json) default string
+- description (string(500) nullable)
+- timestamps
+
+------------------------------------------------
+5) Pilgrim/Jamaah
+------------------------------------------------
+
+5.1 pilgrim_profiles
+- id (PK)
+- user_id (unique, FK -> users.id onDelete cascade)
+- agent_id (FK nullable -> agents.id onDelete set null)
+- nik (string(16) unique nullable)
+- passport_number (string(20) unique nullable)
+- passport_expiry (date nullable)
+- foto_ktp (string nullable)
+- foto_passport (string nullable)
+- profile_status (enum: incomplete, complete, verified) default incomplete
+- input_by (FK nullable -> users.id onDelete set null)
+- notes (text nullable)
+- timestamps + softDeletes
+- Index: agent_id, profile_status
+
+------------------------------------------------
+6) Booking
+------------------------------------------------
+
+6.1 bookings
+- id (PK)
+- booking_number (string(20) unique)
+- trip_id (unsignedBigInteger) [tanpa FK]
+- trip_batch_id (unsignedBigInteger nullable)
+- package_id (unsignedBigInteger)
+- user_id (FK -> users.id onDelete restrict)
+- agent_id (FK nullable -> agents.id onDelete set null)
+- total_pax (int)
+- total_amount (decimal(15,2))
+- status (enum: pending, confirmed, departed, returned, cancelled) default pending
+- document_status (enum: incomplete, complete, verified) default incomplete
+- customer_notes (text nullable)
+- admin_notes (text nullable)
+- created_by (unsignedBigInteger nullable) [FK di migration -> users.id onDelete set null]
+- timestamps + softDeletes
+- Index: [trip_id,status], [trip_batch_id,status], [user_id,status], agent_id, booking_number, document_status, status
+
+6.2 booking_passengers
+- id (PK)
+- booking_id (FK -> bookings.id onDelete cascade)
+- pilgrim_profile_id (FK nullable -> pilgrim_profiles.id onDelete set null)
+- is_primary (boolean default false)
+- pricing_category_id (unsignedBigInteger)
+- full_name (string)
+- nik (string(16) nullable)
+- passport_number (string(20) nullable)
+- passport_expiry (date nullable)
+- birth_date (date nullable)
+- gender (enum: L,P nullable)
+- phone (string(20) nullable)
+- foto_ktp (string nullable)
+- foto_passport (string nullable)
+- price (decimal(15,2))
+- document_status (enum: incomplete, complete, verified) default incomplete
+- timestamps
+- Index: booking_id, pilgrim_profile_id, document_status, is_primary
+
+6.3 booking_payments
+- id (PK)
+- booking_id (unique, FK -> bookings.id onDelete cascade)
+- amount (decimal(15,2))
+- payment_method (enum: transfer, virtual_account, cash) default transfer
+- bank_name (string nullable)
+- account_name (string nullable)
+- transaction_ref (string(100) nullable)
+- status (enum: pending, success, failed, refunded) default pending
+- proof_of_payment (string nullable)
+- paid_at (timestamp nullable)
+- confirmed_by (FK nullable -> users.id onDelete set null)
+- confirmed_at (timestamp nullable)
+- notes (text nullable)
+- timestamps
+- Index: status, paid_at
+
+------------------------------------------------
+7) Trip (catalog & content)
+------------------------------------------------
+
+7.1 trip_categories
+- id (PK)
+- name (string(100))
+- slug (string(100) unique)
+- description (text nullable)
+- thumbnail (string nullable)
+- is_active (boolean default true)
+- timestamps
+- Index: slug, is_active
+
+7.2 trip_category_services
+- id (PK)
+- trip_category_id (FK -> trip_categories.id onDelete cascade)
+- name (string(100))
+- slug (string(100) unique)
+- description (text nullable)
+- thumbnail (string nullable)
+- is_active (boolean default true)
+- timestamps
+- Index: [trip_category_id,is_active], slug
+
+7.3 destinations
+- id (PK)
+- name (string(100))
+- slug (string(100) unique)
+- description (text nullable)
+- thumbnail (string nullable)
+- is_active (boolean default true)
+- timestamps
+- Index: slug, is_active
+
+7.4 activities
+- id (PK)
+- name (string(100))
+- slug (string(100) unique)
+- description (text nullable)
+- thumbnail (string nullable)
+- is_active (boolean default true)
+- timestamps
+- Index: slug, is_active
+
+7.5 difficulties
+- id (PK)
+- name (string(100))
+- slug (string(100) unique)
+- description (text nullable)
+- is_active (boolean default true)
+- timestamps
+- Index: slug, is_active
+
+7.6 pricing_categories
+- id (PK)
+- name (string(100))
+- slug (string(100) unique)
+- description (text nullable)
+- is_active (boolean default true)
+- timestamps
+- Index: slug, is_active
+
+7.7 trips
+- id (PK)
+- title (string)
+- slug (string unique)
+- trip_code (string(50) unique nullable)
+- trip_category_id (FK -> trip_categories.id)
+- trip_category_service_id (FK -> trip_category_services.id)
+- duration_days (int)
+- duration_nights (int)
+- trip_schedule (enum: fixed, recurring, other) default fixed
+- departure_date (date nullable)
+- return_date (date nullable)
+- quota_total (int nullable)
+- team_leader_id (FK nullable -> staff.id onDelete set null)
+- open_from (date nullable)
+- open_until (date nullable)
+- overview_title (string nullable)
+- description (longText nullable)
+- highlights_title (string nullable)
+- highlights (json nullable)
+- include_title (string nullable)
+- includes (json nullable)
+- exclude_title (string nullable)
+- excludes (json nullable)
+- map_title (string nullable)
+- map_image (string nullable)
+- map_iframe (text nullable)
+- gallery (json nullable)
+- video_urls (json nullable)
+- faq_title (string nullable)
+- faq (json nullable)
+- status (enum: draft, open, full, closed, ongoing, completed, cancelled) default draft
+- is_published (boolean default false)
+- thumbnail (string nullable)
+- created_by (FK nullable -> users.id onDelete set null)
+- timestamps + softDeletes
+- Index: slug, trip_code, [trip_category_id,status], [trip_category_service_id,status], [status,is_published], departure_date, trip_schedule
+
+7.8 trip_itineraries
+- id (PK)
+- trip_id (FK -> trips.id onDelete cascade)
+- day_label (string(20))
+- title (string)
+- description (longText)
+- sort_order (int default 1)
+- timestamps
+- Index: [trip_id,sort_order]
+
+7.9 trip_packages
+- id (PK)
+- trip_id (FK -> trips.id onDelete cascade)
+- name (string(100))
+- room_type (enum: single, double, triple, quad)
+- min_pax (int default 1)
+- is_active (boolean default true)
+- timestamps
+- Index: [trip_id,is_active], room_type
+
+7.10 trip_package_prices
+- id (PK)
+- trip_package_id (FK -> trip_packages.id onDelete cascade)
+- pricing_category_id (FK -> pricing_categories.id onDelete restrict)
+- regular_price (decimal(15,2))
+- is_sale (boolean default false)
+- sale_price (decimal nullable)
+- is_active (boolean default true)
+- timestamps
+- Unique: [trip_package_id, pricing_category_id]
+- Index: [trip_package_id,is_active]
+
+7.11 trip_batches
+- id (PK)
+- trip_id (FK -> trips.id onDelete cascade)
+- batch_name (string nullable)
+- departure_date (date)
+- return_date (date)
+- quota_total (int)
+- team_leader_id (FK nullable -> staff.id onDelete set null)
+- status (enum: open, full, closed, ongoing, completed, cancelled) default open
+- notes (text nullable)
+- timestamps
+- Index: [trip_id,status], departure_date, status
+
+7.12 trip_destination (pivot)
+- trip_id (FK -> trips.id onDelete cascade)
+- destination_id (FK -> destinations.id onDelete cascade)
+- PK: [trip_id, destination_id]
+
+7.13 trip_activity (pivot)
+- trip_id (FK -> trips.id onDelete cascade)
+- activity_id (FK -> activities.id onDelete cascade)
+- PK: [trip_id, activity_id]
+
+7.14 trip_difficulty (pivot)
+- trip_id (FK -> trips.id onDelete cascade)
+- difficulty_id (FK -> difficulties.id onDelete cascade)
+- PK: [trip_id, difficulty_id]
+
+------------------------------------------------
+END
+------------------------------------------------
+

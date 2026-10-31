@@ -1,0 +1,123 @@
+# Struktur Direktori Project Assalam (Hanya Bagian Logika Bisnis saja, diluar library dan file config built-in milik laravel )
+
+backend-core/
+├── app/ (entry point domain: HTTP layer, domain models, modul fitur)
+│   ├── Enums/ (enumerasi business rule)
+│   │   └── RegionType.php (tipe region)
+│   ├── Http/ (layer transport/API: controller & boundary request/response)
+│   │   ├── Controllers/ (controller dasar)
+│   │   │   └── Controller.php (base controller)
+│   │   ├── Controllers/Api/ (controller khusus API; isi file tidak terdeteksi dari daftar)
+│   │   ├── Middleware/ (cross-cutting guard)
+│   │   │   └── EnsureUserIsAdmin.php (authorization admin)
+│   │   ├── Requests/ (DTO/validasi input sebelum masuk use-case)
+│   │   └── Resources/ (serializer response API)
+│   │       
+│   ├── Models/ (data layer: ORM model domain utama)
+│   │   ├── AdminAction.php (audit/riwayat aksi admin)
+│   │   ├── OtpCode.php (OTP verification)
+│   │   ├── PasswordHistory.php (riwayat perubahan password)
+│   │   ├── PilgrimProfile.php (profil jamaah)
+│   │   ├── Region.php (wilayah/region)
+│   │   ├── Role.php (role akses)
+│   │   ├── Setting.php (konfigurasi aplikasi)
+│   │   ├── Staff.php (data staf)
+│   │   ├── User.php (user akun)
+│   │   └── UserProfile.php (profil user)
+│   │   
+│   └── Modules/ (modularisasi fitur: AgentSystem, Booking, Trip)
+│       ├── AgentSystem/ (fitur agen: pendaftaran, verifikasi, bonus, pembayaran)
+│       │   ├── Controllers/ (orchestrate request -> service)
+│       │   │   ├── AdminController.php (aksi admin untuk agen/bonus)
+│       │   │   ├── AgentController.php (aksi agen)
+│       │   │   ├── AuthController.php (auth agen)
+│       │   │   └── BonusController.php (endpoint bonus)
+│       │   ├── Models/ (model domain agen)
+│       │   │   ├── Agent.php (entitas agen)
+│       │   │   ├── AgentAddress.php (alamat agen)
+│       │   │   ├── AgentBankAccount.php (rekening bank agen)
+│       │   │   ├── AgentBonusPayout.php (payout bonus agen)
+│       │   │   ├── AgentDocument.php (dokumen agen)
+│       │   │   ├── BonusTransaction.php (transaksi bonus)
+│       │   │   ├── Payment.php (detail pembayaran agen)
+│       │   │   └── Pilgrim.php (relasi agen dengan jamaah)
+│       │   ├── Providers/ (registrasi service dalam container)
+│       │   │   └── AgentSystemServiceProvider.php
+│       │   ├── Requests/ (validasi input business)
+│       │   │   ├── RegisterAgentRequest.php
+│       │   │   ├── UpdateAgentAddressRequest.php
+│       │   │   ├── UpdateAgentBankRequest.php
+│       │   │   ├── UploadDocumentsRequest.php
+│       │   │   ├── VerifyDocumentRequest.php
+│       │   │   └── VerifyPaymentRequest.php
+│       │   ├── Resources/ (format output API)
+│       │   │   ├── AgentAddressResource.php (mapping address)
+│       │   │   └── AgentResource.php (mapping agent)
+│       │   └── Routes/ (route modul)
+│       │       └── api.php (routing HTTP agent system)
+│       │   
+│       ├── Booking/ (fitur booking: kuota trip, passenger, pembayaran)
+│       │   ├── Controllers/ (controller booking; isi tidak terdeteksi dari daftar)
+│       │   ├── Events/ (domain events)
+│       │   │   ├── BookingConfirmed.php (booking sukses)
+│       │   │   ├── TripBatchQuotaFull.php (kuota batch habis)
+│       │   │   └── TripQuotaFull.php (kuota trip habis)
+│       │   ├── Listeners/ (reaksi atas event)
+│       │   │   ├── OnBookingConfirmed.php
+│       │   │   ├── OnTripBatchStatusChanged.php
+│       │   │   └── OnTripStatusChanged.php
+│       │   ├── Models/ (model booking)
+│       │   │   ├── Booking.php (header booking)
+│       │   │   ├── BookingPassenger.php (detail passenger)
+│       │   │   └── BookingPayment.php (detail payment booking)
+│       │   ├── Observers/ (hook lifecycle model)
+│       │   │   ├── BookingObserver.php
+│       │   │   └── BookingPassengerObserver.php
+│       │   ├── Providers/
+│       │   │   └── BookingServiceProvider.php (registrasi booking module)
+│       │   ├── Routes/ (route modul; isi tidak terdeteksi dari daftar)
+│       │   └── Services/ (use-case/logic utama booking)
+│       │       ├── BookingPaymentService.php (proses pembayaran booking)
+│       │       ├── BookingService.php (proses booking)
+│       │       └── KuotaCheckerService.php (cek kuota trip/batch)
+│       │   
+│       └── Trip/ (fitur katalog & manajemen trip: itinerary, batch, kuota, pricing)
+│           ├── README_CORE.md (catatan struktur/konsep core trip)
+│           ├── Controllers/ (controller trip; isi tidak terdeteksi dari daftar)
+│           ├── Events/ (domain events perubahan status trip/batch)
+│           │   ├── TripBatchStatusChanged.php
+│           │   └── TripStatusChanged.php
+│           ├── Listeners/ (reaksi atas event)
+│           │   ├── OnTripBatchQuotaFull.php
+│           │   └── OnTripQuotaFull.php
+│           ├── Models/ (model domain trip)
+│           │   ├── Activity.php (aktivitas/komponen trip)
+│           │   ├── Destination.php (tujuan/destinasi)
+│           │   ├── Difficulty.php (tingkat kesulitan)
+│           │   ├── PricingCategory.php (kategori harga)
+│           │   ├── README_MODELS_CORE.md (catatan model core)
+│           │   ├── Trip.php (entitas trip)
+│           │   ├── TripBatch.php (instance jadwal trip)
+│           │   ├── TripCategory.php (kategori trip)
+│           │   ├── TripCategoryService.php (logic kategori trip)
+│           │   ├── TripItinerary.php (rencana itinerary)
+│           │   ├── TripPackage.php (paket komponen trip)
+│           │   └── TripPackagePrice.php (harga paket)
+│           ├── Observers/ (hook lifecycle model trip)
+│           │   ├── TripBatchObserver.php
+│           │   └── TripObserver.php
+│           ├── Providers/
+│           │   └── TripServiceProvider.php
+│           ├── Routes/ (route modul; isi tidak terdeteksi dari daftar)
+│           └── Services/ (use-case logic trip)
+│               ├── TripService.php (operasi trip)
+│               └── TripStatusService.php (manajemen status trip)
+│
+├── Observers/ (observer global lintas domain)
+│   └── PilgrimProfileObserver.php (hook perubahan PilgrimProfile)
+├── Providers/ (service provider aplikasi)
+│   └── AppServiceProvider.php
+└── Services/ (service global lintas modul)
+    └── GenerateBonusService.php (generator bonus)
+
+

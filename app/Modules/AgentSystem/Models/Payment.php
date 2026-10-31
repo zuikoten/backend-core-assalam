@@ -9,25 +9,23 @@ class Payment extends Model
 {
     use HasFactory;
 
+    protected $table = 'agent_payments';
+
     protected $fillable = [
         'agent_id',
-        'payment_type',
         'amount',
         'payment_method',
-        'bank_account',
+        'bank_account_id',
         'transaction_ref',
         'status',
-        'proof_document_id'
+        'paid_at',
+        'proof_document_id',
+        'notes'
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
-    ];
-
-    const TYPES = [
-        'registration_fee' => 'Biaya Pendaftaran',
-        'bonus_fee' => 'Fee Bonus',
-        'other' => 'Lainnya'
+        'paid_at' => 'datetime',
     ];
 
     public function agent()
@@ -35,24 +33,14 @@ class Payment extends Model
         return $this->belongsTo(Agent::class);
     }
 
+    public function bankAccount()
+    {
+        return $this->belongsTo(AgentBankAccount::class, 'bank_account_id');
+    }
+
     public function document()
     {
         return $this->belongsTo(AgentDocument::class, 'proof_document_id');
-    }
-
-    public function bonusTransactions()
-    {
-        return $this->hasMany(BonusTransaction::class);
-    }
-
-    public function getTypeLabelAttribute()
-    {
-        return self::TYPES[$this->payment_type] ?? $this->payment_type;
-    }
-
-    public function scopeRegistration($query)
-    {
-        return $query->where('payment_type', 'registration_fee');
     }
 
     public function scopeSuccessful($query)

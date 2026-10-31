@@ -30,10 +30,15 @@ class AuthController extends Controller
 
         $token = $user->createToken('api-token')->plainTextToken;
 
+        // Get role names - use first role as primary role
+        $roleNames = $user->getRoleNames();
+        $role = $roleNames[0] ?? null; // 'admin', 'super_admin', 'agent', or null
+
         return response()->json([
             'token' => $token,
             'user' => $user,
             'agent' => $user->agent,
+            'role' => $role,
             'email_verified' => (bool) $user->email_verified,
         ]);
     }
